@@ -37,7 +37,7 @@ fn main() {
 ![скриншот](https://example.com/shot.png \"large\")";
 
     let out = convert(md, ProfileKind::Full);
-    assert!(out.contains("[size=30][b]Отчёт за неделю[/b][/size]"));
+    assert!(out.contains("[b]Отчёт за неделю[/b]"));
     assert!(out.contains("[b]команда[/b]"));
     assert!(out.contains("[i]краткие[/i]"));
     assert!(out.contains("[s]15[/s]"));
@@ -125,7 +125,7 @@ fn disabled_manual_highlight_still_uses_text_fallback() {
 fn markdown_conversion_generates_only_allowed_tags() {
     let md = "# H\n\n**b** *i* ~~s~~ [text](https://e.com)\n\n![image](https://e.com/i.png)\n\n```\nlet x = 1;\n```";
     let out = convert(md, ProfileKind::Full);
-    for tag in ["[code", "[img", "[timestamp", "[disk", "[br"] {
+    for tag in ["[code", "[img", "[timestamp", "[disk", "[br", "[list", "[hr", "[color", "[size", "[icon"] {
         assert!(!out.contains(tag), "unsupported tag was generated: {tag}: {out}");
     }
 }
@@ -133,12 +133,12 @@ fn markdown_conversion_generates_only_allowed_tags() {
 #[test]
 fn gui_smoke_preview_renders_without_panic() {
     let md = "# Заголовок\n\n**жирный** [u]подчёркнутый[/u] `код`\n\n```rust\nlet x = 1; // комментарий\n```\n\n> цитата\n\n- пункт 1\n- пункт 2\n\n[timestamp=1700000000 format=DD.MM.YYYY] [disk=7]\n\n![img](https://e.com/i.png \"small\")";
-    let doc = parse_markdown(md).document;
     let settings = AppSettings::default();
+    let output = convert(md, ProfileKind::Full);
 
     let ctx = egui::Context::default();
     let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
-        show_preview(ui, &doc, &settings);
+        show_preview(ui, &output, &settings);
     });
     output.textures_delta.clear();
 }
@@ -157,13 +157,36 @@ fn task_lists_and_nested_markdown_keep_structure() {
 
     assert_eq!(
         out,
-        "• [ ] [b]Подготовить[/b] [url=https://example.com/doc]документ[/url]\n    • [x] [color=#6b7280][b]проверить[/b][/color]"
+        "• [ ] [b]Подготовить[/b] [url=https://example.com/doc]документ[/url]\n    • [x] [b]проверить[/b]"
     );
 }
 
 #[test]
-fn tables_keep_cell_structure_with_text_fallback() {
-    let md = "| Имя | Статус |\n| --- | --- |\n| **Иван** | Готово |";
+fn tables_use_supported_bbcode_only() {
+    let md = "| Имя | Статус |\n| --- | --- |\n| **Иван** и *Пётр* | [Готово](https://example.com/status) |";
     let out = convert(md, ProfileKind::Full);
-    assert_eq!(out, "| Имя | Статус |\n| [b]Иван[/b] | Готово |");
+    assert!(out.starts_with("[code]") && out.ends_with("[/code]"), "table is not wrapped in [code]: {out}");
+    assert!(out.contains("Иван и Пётр"), "table text is missing: {out}");
+    assert!(out.contains("Готово"), "table link text is missing: {out}");
+    for tag in ["[b]", "[i]", "[u]", "[s]", "[url]", "[url=", "[user=", "[table]", "[tr]", "[td]", "[list]", "[hr]"] {
+        assert!(!out.contains(tag), "BBCode formatting was generated in a table: {tag}: {out}");
+    }
+
+    let core_safe_out = convert(md, ProfileKind::CoreSafe);
+    for tag in ["[b]", "[i]", "[u]", "[s]", "[url]", "[url=", "[user="] {
+        assert!(!core_safe_out.contains(tag), "BBCode formatting was generated in a Core Safe table: {tag}: {core_safe_out}");
+    }
+}
+
+#[test]
+fn tables_align_all_rows_by_bbcode_width() {
+    let md = "| Command | Description |\n| --- | --- |\n| git status | List all new or modified files |\n| git diff | Show file differences that haven't been staged |";
+    let out = convert(md, ProfileKind::Full);
+    let table = out
+        .strip_prefix("[code]")
+        .and_then(|text| text.strip_suffix("[/code]"))
+        .expect("table must be wrapped in [code]");
+    assert!(out.contains("Show file differences that haven't"), "long description was not wrapped: {out}");
+    assert!(out.contains("been staged"), "long description tail is missing: {out}");
+    assert!(table.lines().all(|line| line.starts_with('+') || line.starts_with('|')), "table structure is malformed: {out}");
 }

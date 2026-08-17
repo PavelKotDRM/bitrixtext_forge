@@ -7,7 +7,10 @@
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 
 use crate::diagnostics::{Diagnostic, Diagnostics};
-use crate::model::{BlockNode, Document, EXCLUDED_TAGS, ImageSize, InlineNode, is_valid_size, normalize_hex_color};
+use crate::model::{
+    BlockNode, Document, EXCLUDED_TAGS, ImageSize, InlineNode, TableAlignment, is_valid_size,
+    normalize_hex_color,
+};
 
 pub struct ParseResult {
     pub document: Document,
@@ -38,14 +41,24 @@ enum InlineFrame {
     Heading(u8),
     Bold,
     Italic,
+    Underline,
     Strike,
     Link(String),
     Image { url: String, title: String },
 }
 
+enum HtmlInlineTag {
+    Bold,
+    Italic,
+    Underline,
+    Strike,
+    Link,
+}
+
 struct TableBuilder {
     rows: Vec<Vec<Vec<InlineNode>>>,
     current_row: Vec<Vec<InlineNode>>,
+    alignments: Vec<TableAlignment>,
 }
 
 pub fn parse_markdown(input: &str) -> ParseResult {
@@ -136,9 +149,20 @@ pub fn parse_markdown(input: &str) -> ParseResult {
                 Tag::Item => {
                     containers.push(Container::Item(Vec::new()));
                 }
-                Tag::Table(_) => {
+                Tag::Table(alignments) => {
                     flush_implicit(&mut inline_stack, &mut containers, &mut diags);
-                    table = Some(TableBuilder { rows: Vec::new(), current_row: Vec::new() });
+                    table = Some(TableBuilder {
+                        rows: Vec::new(),
+                        current_row: Vec::new(),
+                        alignments: alignments
+                            .iter()
+                            .map(|alignment| match alignment {
+                                pulldown_cmark::Alignment::Center => TableAlignment::Center,
+                                pulldown_cmark::Alignment::Right => TableAlignment::Right,
+                                _ => TableAlignment::Left,
+                            })
+                            .collect(),
+                    });
                 }
                 Tag::TableRow => {
                     if let Some(table) = table.as_mut() {
@@ -256,7 +280,7 @@ pub fn parse_markdown(input: &str) -> ParseResult {
                         containers
                             .last_mut()
                             .expect("container")
-                            .push_block(BlockNode::Table { rows: table.rows });
+                            .push_block(BlockNode::Table { rows: table.rows, alignments: table.alignments });
                     }
                 }
                 _ => {}
@@ -287,11 +311,24 @@ pub fn parse_markdown(input: &str) -> ParseResult {
                 containers.last_mut().expect("container").push_block(BlockNode::HorizontalRule);
             }
             Event::Html(t) | Event::InlineHtml(t) => {
-                diags.push(Diagnostic::warn(
-                    "HTML не поддерживается Bitrix24 и передан как обычный текст.",
-                ));
-                ensure_implicit_paragraph(&mut inline_stack);
-                append_inline(&mut inline_stack, InlineNode::Text(t.to_string()));
+                match parse_inline_html_tag(&t) {
+                    Some(HtmlToken::Start(frame)) => {
+                        ensure_implicit_paragraph(&mut inline_stack);
+                        inline_stack.push((frame, Vec::new()));
+                    }
+                    Some(HtmlToken::End(tag)) => close_html_inline(&mut inline_stack, &mut diags, tag),
+                    Some(HtmlToken::Break) => {
+                        ensure_implicit_paragraph(&mut inline_stack);
+                        append_inline(&mut inline_stack, InlineNode::HardBreak);
+                    }
+                    None => {
+                        diags.push(Diagnostic::warn(
+                            "HTML-тег не имеет безопасного BBCode-эквивалента и передан как обычный текст.",
+                        ));
+                        ensure_implicit_paragraph(&mut inline_stack);
+                        append_inline(&mut inline_stack, InlineNode::Text(t.to_string()));
+                    }
+                }
             }
             Event::TaskListMarker(checked) => {
                 ensure_implicit_paragraph(&mut inline_stack);
@@ -340,6 +377,88 @@ fn close_inline(
         let nodes = postprocess_inlines(nodes, diags);
         append_inline(stack, wrap(nodes));
     }
+}
+
+enum HtmlToken {
+    Start(InlineFrame),
+    End(HtmlInlineTag),
+    Break,
+}
+
+fn parse_inline_html_tag(input: &str) -> Option<HtmlToken> {
+    let tag = input.trim();
+    let body = tag.strip_prefix('<')?.strip_suffix('>')?.trim();
+    if body.starts_with('!') || body.starts_with('?') {
+        return None;
+    }
+
+    let closing = body.strip_prefix('/').map(str::trim);
+    let name_and_attrs = closing.unwrap_or(body).trim_end_matches('/').trim();
+    let name_end = name_and_attrs.find(char::is_whitespace).unwrap_or(name_and_attrs.len());
+    let name = name_and_attrs[..name_end].to_ascii_lowercase();
+
+    if closing.is_some() {
+        return match name.as_str() {
+            "b" | "strong" => Some(HtmlToken::End(HtmlInlineTag::Bold)),
+            "i" | "em" => Some(HtmlToken::End(HtmlInlineTag::Italic)),
+            "u" => Some(HtmlToken::End(HtmlInlineTag::Underline)),
+            "s" | "del" | "strike" => Some(HtmlToken::End(HtmlInlineTag::Strike)),
+            "a" => Some(HtmlToken::End(HtmlInlineTag::Link)),
+            _ => None,
+        };
+    }
+
+    match name.as_str() {
+        "br" => Some(HtmlToken::Break),
+        "b" | "strong" => Some(HtmlToken::Start(InlineFrame::Bold)),
+        "i" | "em" => Some(HtmlToken::Start(InlineFrame::Italic)),
+        "u" => Some(HtmlToken::Start(InlineFrame::Underline)),
+        "s" | "del" | "strike" => Some(HtmlToken::Start(InlineFrame::Strike)),
+        "a" => html_attribute(name_and_attrs, "href")
+            .map(|url| HtmlToken::Start(InlineFrame::Link(url.to_string()))),
+        _ => None,
+    }
+}
+
+fn html_attribute<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
+    let lower = tag.to_ascii_lowercase();
+    let needle = format!("{name}=");
+    let start = lower.find(&needle)? + needle.len();
+    let value = &tag[start..];
+    let quote = value.chars().next()?;
+    if quote == '\'' || quote == '"' {
+        let end = value[1..].find(quote)? + 1;
+        Some(&value[1..end])
+    } else {
+        Some(value.split_whitespace().next().unwrap_or_default())
+    }
+}
+
+fn close_html_inline(
+    stack: &mut Vec<(InlineFrame, Vec<InlineNode>)>,
+    diags: &mut Diagnostics,
+    tag: HtmlInlineTag,
+) {
+    let Some((frame, nodes)) = stack.pop() else {
+        return;
+    };
+    let nodes = postprocess_inlines(nodes, diags);
+    let node = match (tag, frame) {
+        (HtmlInlineTag::Bold, InlineFrame::Bold) => InlineNode::Bold(nodes),
+        (HtmlInlineTag::Italic, InlineFrame::Italic) => InlineNode::Italic(nodes),
+        (HtmlInlineTag::Underline, InlineFrame::Underline) => InlineNode::Underline(nodes),
+        (HtmlInlineTag::Strike, InlineFrame::Strike) => InlineNode::Strike(nodes),
+        (HtmlInlineTag::Link, InlineFrame::Link(url)) => InlineNode::Link { text: nodes, url },
+        (_, frame) => {
+            diags.push(Diagnostic::warn("Некорректно вложенный HTML-тег передан как обычный текст."));
+            append_inline(stack, InlineNode::Text(plain_text_of(&nodes)));
+            match frame {
+                InlineFrame::Link(url) => InlineNode::Text(url),
+                _ => return,
+            }
+        }
+    };
+    append_inline(stack, node);
 }
 
 /// Сливает соседние текстовые прогоны и прогоняет их через сканер
@@ -652,12 +771,16 @@ mod tests {
 
     #[test]
     fn parses_tables_as_structured_rows() {
-        let doc = parse("| Имя | Статус |\n| --- | --- |\n| **Иван** | Готово |");
+        let doc = parse("| Имя | Статус | Сумма |\n| :--- | :---: | ---: |\n| **Иван** | Готово | 1600 |");
         match &doc.blocks[0] {
-            BlockNode::Table { rows } => {
+            BlockNode::Table { rows, alignments } => {
                 assert_eq!(rows.len(), 2);
                 assert_eq!(plain_text_of(&rows[0][0]), "Имя");
                 assert!(matches!(rows[1][0].first(), Some(InlineNode::Bold(_))));
+                assert_eq!(
+                    alignments,
+                    &[TableAlignment::Left, TableAlignment::Center, TableAlignment::Right]
+                );
             }
             other => panic!("unexpected block: {other:?}"),
         }
@@ -679,6 +802,29 @@ mod tests {
     fn parses_horizontal_rule() {
         let doc = parse("a\n\n---\n\nb");
         assert!(doc.blocks.iter().any(|b| matches!(b, BlockNode::HorizontalRule)));
+    }
+
+    #[test]
+    fn converts_supported_inline_html_to_ast() {
+        let doc = parse("<strong>важно</strong> <a href=\"https://example.com\">ссылка</a><br>далее");
+        match &doc.blocks[0] {
+            BlockNode::Paragraph(nodes) => {
+                assert!(matches!(nodes.first(), Some(InlineNode::Bold(_))));
+                assert!(nodes.iter().any(|node| matches!(node, InlineNode::Link { url, .. } if url == "https://example.com")));
+                assert!(nodes.iter().any(|node| matches!(node, InlineNode::HardBreak)));
+            }
+            other => panic!("unexpected block: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn preserves_unsupported_inline_html_as_text() {
+        let result = parse_markdown("<mark>выделено</mark>");
+        assert!(result.diagnostics.warnings() > 0);
+        assert_eq!(plain_text_of(match &result.document.blocks[0] {
+            BlockNode::Paragraph(nodes) => nodes,
+            other => panic!("unexpected block: {other:?}"),
+        }), "<mark>выделено</mark>");
     }
 
     #[test]

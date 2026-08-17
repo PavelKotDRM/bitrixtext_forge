@@ -5,9 +5,9 @@
 //! и предупреждает о непереносимости GUI-подсветки.
 
 use crate::diagnostics::{Diagnostic, Diagnostics};
-use crate::model::{BlockNode, Document, InlineNode, is_valid_size};
+use crate::model::{BlockNode, Document, InlineNode, TableAlignment};
 use crate::parser::plain_text_of;
-use crate::profiles::{LineBreakStyle, QuoteStyle, RenderOptions};
+use crate::profiles::{LineBreakStyle, RenderOptions};
 
 use super::RenderResult;
 
@@ -22,6 +22,12 @@ struct FullRenderer<'a> {
     manual_code: bool,
     diags: Diagnostics,
 }
+
+const MAX_TABLE_COLUMN_WIDTH: usize = 36;
+const SPACE_WIDTH: usize = 4;
+const DASH_WIDTH: usize = 5;
+const PLUS_WIDTH: usize = 9;
+const PIPE_WIDTH: usize = 4;
 
 impl FullRenderer<'_> {
     fn br(&self) -> &'static str {
@@ -42,17 +48,7 @@ impl FullRenderer<'_> {
     fn render_block(&mut self, block: &BlockNode, depth: usize) -> String {
         match block {
             BlockNode::Paragraph(inlines) => self.render_inlines(inlines),
-            BlockNode::Heading { level, content } => {
-                let inner = format!("[b]{}[/b]", self.render_inlines(content));
-                let idx = (level.saturating_sub(1) as usize).min(5);
-                let px = self.opts.heading_sizes[idx];
-                if px == 0 {
-                    inner
-                } else {
-                    let px = px.clamp(crate::model::SIZE_MIN, crate::model::SIZE_MAX);
-                    format!("[size={px}]{inner}[/size]")
-                }
-            }
+            BlockNode::Heading { content, .. } => format!("[b]{}[/b]", self.render_inlines(content)),
             BlockNode::Quote(blocks) => self.render_quote(blocks),
             BlockNode::CodeBlock { code, .. } => {
                 self.diags.push(Diagnostic::info(
@@ -63,7 +59,7 @@ impl FullRenderer<'_> {
             BlockNode::List { ordered, start, items } => {
                 self.render_list(*ordered, *start, items, depth)
             }
-            BlockNode::Table { rows } => self.render_table(rows),
+            BlockNode::Table { rows, alignments } => self.render_table(rows, alignments),
             BlockNode::Image { url, alt, .. } => self.render_image_link(url, alt),
             BlockNode::HorizontalRule => self.opts.hr_text.clone(),
         }
@@ -77,14 +73,11 @@ impl FullRenderer<'_> {
         let inner = inner_renderer.render_blocks(blocks, 0);
         self.diags.extend(inner_renderer.diags);
 
-        match self.opts.quote_style {
-            QuoteStyle::LinePrefix => inner
-                .lines()
-                .map(|l| format!(">>{l}"))
-                .collect::<Vec<_>>()
-                .join("\n"),
-            QuoteStyle::FullBlock => format!("------\n{inner}\n------"),
-        }
+        inner
+            .lines()
+            .map(|line| format!(">>{}", line.trim_start_matches('>')))
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     fn render_list(
@@ -94,44 +87,95 @@ impl FullRenderer<'_> {
         items: &[Vec<BlockNode>],
         depth: usize,
     ) -> String {
-        // документированная табуляция — 4 пробела
         let indent = "    ".repeat(depth);
-        let mut lines: Vec<String> = Vec::new();
-        for (i, item) in items.iter().enumerate() {
+        let mut lines = Vec::new();
+        for (index, item) in items.iter().enumerate() {
+            let rendered = self.render_item_blocks(item, depth);
             let marker = if ordered {
-                format!("{}. ", start + i as u64)
+                format!("{}. ", start + index as u64)
             } else {
                 format!("{} ", self.opts.bullet_marker.as_str())
             };
-            let rendered = self.render_item_blocks(item, depth);
-            for (j, line) in rendered.into_iter().enumerate() {
-                if j == 0 {
-                    lines.push(format!("{indent}{marker}{line}"));
-                } else {
-                    lines.push(format!("{indent}    {line}"));
-                }
+            for (line_index, line) in rendered.iter().enumerate() {
+                let prefix = if line_index == 0 { marker.as_str() } else { "    " };
+                lines.push(format!("{indent}{prefix}{line}"));
             }
-        }
-        if self.opts.warn_on_format_loss {
-            self.diags.push(Diagnostic::info(
-                "Списки Markdown преобразованы в текстовые маркеры: отдельные BBCode-теги списков не документированы Bitrix24.",
-            ));
         }
         lines.join(self.br())
     }
 
-    fn render_table(&mut self, rows: &[Vec<Vec<InlineNode>>]) -> String {
+    fn render_table(&mut self, rows: &[Vec<Vec<InlineNode>>], alignments: &[TableAlignment]) -> String {
         self.diags.push(Diagnostic::info(
-            "Таблица Markdown выведена текстовыми строками: BBCode-тег таблицы не документирован Bitrix24.",
+            "Таблица Markdown выведена в контейнере [code]: теги [table], [tr] и [td] не поддерживаются Bitrix24.",
         ));
-        rows
+        let rendered_rows = rows
             .iter()
             .map(|row| {
-                let cells = row.iter().map(|cell| self.render_inlines(cell)).collect::<Vec<_>>();
-                format!("| {} |", cells.join(" | "))
+                row.iter()
+                    .map(|cell| plain_text_of(cell).replace(['\n', '\r'], " "))
+                    .collect::<Vec<_>>()
             })
-            .collect::<Vec<_>>()
-            .join(self.br())
+            .collect::<Vec<_>>();
+        let column_count = rendered_rows.iter().map(Vec::len).max().unwrap_or(0);
+        let mut widths = vec![0; column_count];
+        for row in &rendered_rows {
+            for (column, content) in row.iter().enumerate() {
+                let content_width = content.chars().count();
+                let longest_word_width = content
+                    .split_whitespace()
+                    .map(|word| word.chars().count())
+                    .max()
+                    .unwrap_or(0);
+                let target_width = content_width.min(MAX_TABLE_COLUMN_WIDTH).max(longest_word_width);
+                widths[column] = widths[column].max(target_width);
+            }
+        }
+        let wrapped_rows = rendered_rows
+            .iter()
+            .map(|row| {
+                widths
+                    .iter()
+                    .enumerate()
+                    .map(|(column, width)| match row.get(column) {
+                        Some(content) => wrap_table_cell(content, *width),
+                        None => vec![String::new()],
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        let mut visual_widths = vec![0; column_count];
+        for row in &wrapped_rows {
+            for (column, cell_lines) in row.iter().enumerate() {
+                for line in cell_lines {
+                    visual_widths[column] = visual_widths[column].max(estimated_text_width(line));
+                }
+            }
+        }
+        let border = format_table_border(&visual_widths);
+        let mut lines = vec![border.clone()];
+        for (row_index, wrapped_cells) in wrapped_rows.iter().enumerate() {
+            let row_height = wrapped_cells.iter().map(Vec::len).max().unwrap_or(1);
+            for line_index in 0..row_height {
+                let cells = visual_widths
+                    .iter()
+                    .enumerate()
+                    .map(|(column, width)| {
+                        let content = wrapped_cells[column].get(line_index).map_or("", String::as_str);
+                        format_table_cell(
+                            content,
+                            *width,
+                            alignments.get(column).unwrap_or(&TableAlignment::Left),
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                lines.push(format!("|{}|", cells.join("|")));
+            }
+            if row_index == 0 {
+                lines.push(border.clone());
+            }
+        }
+        lines.push(border);
+        format!("[code]{}[/code]", lines.join(self.br()))
     }
 
     /// Рендер блоков элемента списка в набор строк.
@@ -140,11 +184,12 @@ impl FullRenderer<'_> {
         for b in blocks {
             match b {
                 BlockNode::List { ordered, start, items } => {
-                    let nested = self.render_list(*ordered, *start, items, depth + 1);
-                    for l in nested.split(self.br()) {
-                        // вложенный список уже с отступом родителя
-                        lines.push(l.trim_start_matches(&"    ".repeat(depth + 1)).to_string());
-                    }
+                    let nested_indent = "    ".repeat(depth + 1);
+                    lines.extend(
+                        self.render_list(*ordered, *start, items, depth + 1)
+                            .split(self.br())
+                            .map(|line| line.trim_start_matches(&nested_indent).to_string()),
+                    );
                 }
                 other => {
                     let s = self.render_block(other, depth);
@@ -204,48 +249,95 @@ impl FullRenderer<'_> {
                     let label = self.render_inlines(text);
                     out.push_str(&format!("[user={id}]{label}[/user]"));
                 }
-                InlineNode::Color { hex, content } => {
+                InlineNode::Color { content, .. } => {
                     let inner = self.render_inlines(content);
-                    match crate::model::normalize_hex_color(hex) {
-                        Some(h) => out.push_str(&format!("[color={h}]{inner}[/color]")),
-                        None => {
-                            self.diags.push(Diagnostic::warn(format!(
-                                "Некорректный HEX-цвет «{hex}» пропущен при рендеринге."
-                            )));
-                            out.push_str(&inner);
-                        }
-                    }
+                    self.diags.push(Diagnostic::warn("Цвет удалён: тег [color] не входит в поддерживаемый набор."));
+                    out.push_str(&inner);
                 }
-                InlineNode::Size { px, content } => {
+                InlineNode::Size { content, .. } => {
                     let inner = self.render_inlines(content);
-                    if is_valid_size(*px) {
-                        out.push_str(&format!("[size={px}]{inner}[/size]"));
-                    } else {
-                        self.diags.push(Diagnostic::warn(format!(
-                            "Значение size={px} вне диапазона 8–30 и пропущено при рендеринге."
-                        )));
-                        out.push_str(&inner);
-                    }
+                    self.diags.push(Diagnostic::warn("Размер текста удалён: тег [size] не входит в поддерживаемый набор."));
+                    out.push_str(&inner);
                 }
-                InlineNode::Icon { url, params } => {
-                    if params.is_empty() {
-                        out.push_str(&format!("[icon={url}]"));
-                    } else {
-                        out.push_str(&format!("[icon={url} {params}]"));
-                    }
+                InlineNode::Icon { url, .. } => {
+                    self.diags.push(Diagnostic::warn("Иконка заменена URL: тег [icon] не входит в поддерживаемый набор."));
+                    out.push_str(url);
                 }
                 InlineNode::Image { url, alt, .. } => {
                     let image_link = self.render_image_link(url, alt);
                     out.push_str(&image_link);
                 }
                 InlineNode::Code(code) => {
-                    out.push_str(&format!("[color=#6b7280][b]{code}[/b][/color]"));
+                    out.push_str(&format!("[b]{code}[/b]"));
                 }
                 InlineNode::SoftBreak | InlineNode::HardBreak => out.push_str(self.br()),
             }
         }
         out
     }
+}
+
+fn wrap_table_cell(content: &str, width: usize) -> Vec<String> {
+    if content.chars().count() <= width {
+        return vec![content.to_string()];
+    }
+
+    let mut lines = Vec::new();
+    let mut line = String::new();
+    for word in content.split_whitespace() {
+        if !line.is_empty() && line.chars().count() + 1 + word.chars().count() > width {
+            lines.push(std::mem::take(&mut line));
+        }
+        if !line.is_empty() {
+            line.push(' ');
+        }
+        line.push_str(word);
+    }
+    if !line.is_empty() {
+        lines.push(line);
+    }
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+    lines
+}
+
+fn estimated_text_width(text: &str) -> usize {
+    text.chars()
+        .map(|character| match character {
+            ' ' => SPACE_WIDTH,
+            'i' | 'j' | 'l' | 't' | 'I' | '1' | '.' | ',' | ':' | ';' | '!' | '\'' | '|' => 3,
+            'm' | 'w' | 'M' | 'W' | '@' | '%' | '&' => 10,
+            '-' => DASH_WIDTH,
+            '+' => PLUS_WIDTH,
+            '0'..='9' => 7,
+            'A'..='Z' | 'А'..='Я' | 'Ё' => 8,
+            'a'..='z' | 'а'..='я' | 'ё' => 7,
+            _ => 8,
+        })
+        .sum()
+}
+
+fn format_table_border(widths: &[usize]) -> String {
+    let segments = widths
+        .iter()
+        .map(|width| {
+            let row_segment_width = PIPE_WIDTH + 2 * SPACE_WIDTH + width;
+            "-".repeat(row_segment_width.div_ceil(DASH_WIDTH).max(1))
+        })
+        .collect::<Vec<_>>();
+    format!("+{}+", segments.join("+"))
+}
+
+fn format_table_cell(content: &str, width: usize, alignment: &TableAlignment) -> String {
+    let padding_width = width.saturating_sub(estimated_text_width(content));
+    let padding_spaces = padding_width.div_ceil(SPACE_WIDTH);
+    let (left_padding, right_padding) = match alignment {
+        TableAlignment::Left => (0, padding_spaces),
+        TableAlignment::Center => (padding_spaces / 2, padding_spaces - padding_spaces / 2),
+        TableAlignment::Right => (padding_spaces, 0),
+    };
+    format!(" {}{content}{} ", " ".repeat(left_padding), " ".repeat(right_padding))
 }
 
 #[allow(dead_code)]
@@ -258,7 +350,25 @@ fn alt_or_url(nodes: &[InlineNode], url: &str) -> String {
 mod tests {
     use super::*;
     use crate::parser::parse_markdown;
-    use crate::profiles::BulletMarker;
+    use crate::profiles::{BulletMarker, QuoteStyle};
+
+    #[test]
+    fn table_border_segments_cover_their_cell_widths() {
+        let widths = [16, 31];
+        let border = format_table_border(&widths);
+
+        for (segment, width) in border.trim_matches('+').split('+').zip(widths) {
+            let row_segment_width = PIPE_WIDTH + 2 * SPACE_WIDTH + width;
+            assert!(estimated_text_width(segment) >= row_segment_width);
+        }
+    }
+
+    #[test]
+    fn table_cells_use_the_requested_alignment() {
+        assert_eq!(format_table_cell("x", 12, &TableAlignment::Left), " x   ");
+        assert_eq!(format_table_cell("x", 12, &TableAlignment::Center), "  x  ");
+        assert_eq!(format_table_cell("x", 12, &TableAlignment::Right), "   x ");
+    }
 
     fn render_md(input: &str) -> String {
         let doc = parse_markdown(input).document;
@@ -297,19 +407,18 @@ mod tests {
     }
 
     #[test]
-    fn heading_sizes_mapping() {
-        assert_eq!(render_md("# H"), "[size=30][b]H[/b][/size]");
-        assert_eq!(render_md("## H"), "[size=24][b]H[/b][/size]");
-        assert_eq!(render_md("### H"), "[size=20][b]H[/b][/size]");
-        // уровень 4 → только [b]
+    fn headings_use_bold_only() {
+        assert_eq!(render_md("# H"), "[b]H[/b]");
+        assert_eq!(render_md("## H"), "[b]H[/b]");
+        assert_eq!(render_md("### H"), "[b]H[/b]");
         assert_eq!(render_md("#### H"), "[b]H[/b]");
     }
 
     #[test]
-    fn heading_size_clamped_to_range() {
+    fn heading_size_setting_is_not_rendered() {
         let mut opts = RenderOptions::default();
-        opts.heading_sizes[0] = 99; // вне диапазона — должен ограничиться 30
-        assert_eq!(render_md_opts("# H", &opts), "[size=30][b]H[/b][/size]");
+        opts.heading_sizes[0] = 99;
+        assert_eq!(render_md_opts("# H", &opts), "[b]H[/b]");
     }
 
     #[test]
@@ -318,9 +427,14 @@ mod tests {
     }
 
     #[test]
-    fn quote_full_block() {
+    fn nested_quotes_use_a_single_bitrix_prefix() {
+        assert_eq!(render_md("> > > вложенная цитата"), ">>вложенная цитата");
+    }
+
+    #[test]
+    fn quote_always_uses_line_prefix() {
         let opts = RenderOptions { quote_style: QuoteStyle::FullBlock, ..Default::default() };
-        assert_eq!(render_md_opts("> цитата", &opts), "------\nцитата\n------");
+        assert_eq!(render_md_opts("> цитата", &opts), ">>цитата");
     }
 
     #[test]
@@ -329,11 +443,8 @@ mod tests {
     }
 
     #[test]
-    fn inline_code() {
-        assert_eq!(
-            render_md("run `ls` now"),
-            "run [color=#6b7280][b]ls[/b][/color] now"
-        );
+    fn inline_code_uses_bold_only() {
+        assert_eq!(render_md("run `ls` now"), "run [b]ls[/b] now");
     }
 
     #[test]
@@ -358,16 +469,13 @@ mod tests {
 
     #[test]
     fn icon_render() {
-        assert_eq!(
-            render_md("[icon=https://e.com/i.png size=16 title=Hello]"),
-            "[icon=https://e.com/i.png size=16 title=Hello]"
-        );
+        assert_eq!(render_md("[icon=https://e.com/i.png size=16 title=Hello]"), "https://e.com/i.png");
     }
 
     #[test]
-    fn color_and_size_render() {
-        assert_eq!(render_md("[color=#F00]красный[/color]"), "[color=#f00]красный[/color]");
-        assert_eq!(render_md("[size=20]большой[/size]"), "[size=20]большой[/size]");
+    fn color_and_size_are_removed() {
+        assert_eq!(render_md("[color=#F00]красный[/color]"), "красный");
+        assert_eq!(render_md("[size=20]большой[/size]"), "большой");
     }
 
     #[test]
@@ -381,19 +489,19 @@ mod tests {
     }
 
     #[test]
-    fn unordered_list_fallback() {
+    fn unordered_list_uses_text_markers() {
         assert_eq!(render_md("- a\n- b"), "• a\n• b");
         let opts = RenderOptions { bullet_marker: BulletMarker::Dash, ..Default::default() };
         assert_eq!(render_md_opts("- a\n- b", &opts), "- a\n- b");
     }
 
     #[test]
-    fn ordered_list_fallback() {
+    fn ordered_list_uses_text_markers() {
         assert_eq!(render_md("1. x\n2. y"), "1. x\n2. y");
     }
 
     #[test]
-    fn nested_list_indented_4_spaces() {
+    fn nested_list_uses_indentation() {
         let out = render_md("- a\n    - b");
         assert_eq!(out, "• a\n    • b");
     }

@@ -6,6 +6,7 @@
 
 use crate::diagnostics::{Diagnostic, Diagnostics};
 use crate::model::{BlockNode, Document, InlineNode};
+use crate::parser::plain_text_of;
 use crate::profiles::RenderOptions;
 
 use super::RenderResult;
@@ -77,7 +78,7 @@ impl SafeRenderer<'_> {
                 }
                 lines.join(self.br())
             }
-            BlockNode::Table { rows } => self.render_table(rows),
+            BlockNode::Table { rows, .. } => self.render_table(rows),
             BlockNode::Image { url, alt, .. } => {
                 self.warn_loss("Изображение заменено текстовой ссылкой (Core Safe Profile).");
                 if alt.is_empty() {
@@ -101,7 +102,7 @@ impl SafeRenderer<'_> {
         rows
             .iter()
             .map(|row| {
-                let cells = row.iter().map(|cell| self.render_inlines(cell)).collect::<Vec<_>>();
+                let cells = row.iter().map(|cell| plain_text_of(cell)).collect::<Vec<_>>();
                 format!("| {} |", cells.join(" | "))
             })
             .collect::<Vec<_>>()

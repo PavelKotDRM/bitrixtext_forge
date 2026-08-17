@@ -1,10 +1,8 @@
-//! GUI-preview документа с ручной подсветкой кода.
+//! Preview итогового BBCode с поддержкой только разрешённых Bitrix24-тегов.
 
 use egui::text::LayoutJob;
 use egui::{Color32, FontId, Stroke, TextFormat, Ui};
 
-use crate::highlight::{TokenKind, highlight_line};
-use crate::model::{BlockNode, Document, InlineNode};
 use crate::settings::AppSettings;
 
 #[derive(Clone, Copy)]
@@ -75,215 +73,123 @@ fn parse_hex(hex: &str) -> Option<Color32> {
     }
 }
 
-pub fn show_preview(ui: &mut Ui, doc: &Document, settings: &AppSettings) {
-    let base_size = settings.editor_font_size;
-    for (i, block) in doc.blocks.iter().enumerate() {
-        if i > 0 {
-            ui.add_space(8.0);
-        }
-        show_block(ui, block, settings, base_size, 0);
-    }
-    if doc.blocks.is_empty() {
+pub fn show_preview(ui: &mut Ui, bbcode: &str, settings: &AppSettings) {
+    if bbcode.is_empty() {
         ui.weak("Пусто. Начните вводить Markdown в редакторе слева.");
+        return;
     }
+    let mut job = LayoutJob::default();
+    append_bbcode(ui, &mut job, bbcode, Fmt::base(settings.output_font_size));
+    ui.label(job);
 }
 
-fn show_block(ui: &mut Ui, block: &BlockNode, settings: &AppSettings, base_size: f32, depth: usize) {
-    match block {
-        BlockNode::Paragraph(inlines) => {
-            let mut job = LayoutJob::default();
-            append_inlines(ui, &mut job, inlines, Fmt::base(base_size));
-            ui.label(job);
+fn append_bbcode(ui: &Ui, job: &mut LayoutJob, source: &str, fmt: Fmt) {
+    let mut remaining = source;
+    while let Some(open) = remaining.find('[') {
+        if open > 0 {
+            job.append(&remaining[..open], 0.0, fmt.text_format(ui));
+            remaining = &remaining[open..];
         }
-        BlockNode::Heading { level, content } => {
-            let idx = (level.saturating_sub(1) as usize).min(5);
-            let px = settings.heading_sizes[idx];
-            let size = if px == 0 { base_size + 2.0 } else { px as f32 };
-            let mut fmt = Fmt::base(size);
-            fmt.strong = true;
-            let mut job = LayoutJob::default();
-            append_inlines(ui, &mut job, content, fmt);
-            ui.label(job);
-        }
-        BlockNode::Quote(blocks) => {
-            let accent = ui.visuals().selection.bg_fill;
-            egui::Frame::group(ui.style())
-                .stroke(Stroke::new(2.0, accent))
-                .show(ui, |ui| {
-                    for b in blocks {
-                        show_block(ui, b, settings, base_size, depth);
-                    }
-                });
-        }
-        BlockNode::CodeBlock { language, code } => {
-            show_code_block(ui, language.as_deref(), code, settings, base_size);
-        }
-        BlockNode::List { ordered, start, items } => {
-            for (i, item) in items.iter().enumerate() {
-                ui.horizontal_top(|ui| {
-                    ui.add_space(depth as f32 * 18.0);
-                    let marker = if *ordered {
-                        format!("{}.", start + i as u64)
-                    } else {
-                        settings.bullet_marker.as_str().to_string()
-                    };
-                    ui.label(egui::RichText::new(marker).size(base_size).strong());
-                    ui.vertical(|ui| {
-                        for b in item {
-                            show_block(ui, b, settings, base_size, depth + 1);
-                        }
-                    });
-                });
+
+        let Some(close) = remaining.find(']') else {
+            job.append(remaining, 0.0, fmt.text_format(ui));
+            return;
+        };
+        let tag = &remaining[1..close];
+        let after_open = &remaining[close + 1..];
+        if let Some((closing_tag, next_fmt)) = opening_tag(tag, fmt) {
+            if let Some(content_end) = find_closing_tag(after_open, closing_tag) {
+                append_bbcode(ui, job, &after_open[..content_end], next_fmt);
+                remaining = &after_open[content_end + closing_tag.len() + 3..];
+                continue;
             }
         }
-        BlockNode::Table { rows } => {
-            egui::Grid::new(ui.next_auto_id()).striped(true).show(ui, |ui| {
-                for row in rows {
-                    for cell in row {
-                        let mut job = LayoutJob::default();
-                        append_inlines(ui, &mut job, cell, Fmt::base(base_size));
-                        ui.label(job);
-                    }
-                    ui.end_row();
-                }
-            });
+        if let Some(icon_fmt) = icon_tag(tag, fmt) {
+            job.append("◆", 0.0, icon_fmt.text_format(ui));
+            remaining = after_open;
+            continue;
         }
-        BlockNode::Image { url, alt, size } => {
-            let size_label = size.map(|s| s.as_str()).unwrap_or("размер по умолчанию");
-            ui.horizontal(|ui| {
-                ui.label("🖼");
-                ui.hyperlink_to(
-                    if alt.is_empty() { url.clone() } else { format!("{alt} — {url}") },
-                    url.clone(),
-                );
-                ui.weak(format!("({size_label})"));
-            });
-        }
-        BlockNode::HorizontalRule => {
-            ui.separator();
-        }
+        job.append("[", 0.0, fmt.text_format(ui));
+        remaining = &remaining[1..];
     }
+    job.append(remaining, 0.0, fmt.text_format(ui));
 }
 
-fn show_code_block(ui: &mut Ui, language: Option<&str>, code: &str, settings: &AppSettings, base_size: f32) {
-    let mono = FontId::monospace(base_size * 0.95);
-    egui::Frame::group(ui.style())
-        .fill(ui.visuals().extreme_bg_color)
-        .show(ui, |ui| {
-            ui.set_min_width(ui.available_width());
-            if let Some(lang) = language {
-                ui.weak(format!("код · {lang}"));
-            }
-            if settings.manual_highlight_preview {
-                let lang = language.unwrap_or("");
-                for line in code.lines() {
-                    let mut job = LayoutJob::default();
-                    for tok in highlight_line(lang, line) {
-                        let color = token_color(ui, tok.kind);
-                        job.append(
-                            &tok.text,
-                            0.0,
-                            TextFormat { font_id: mono.clone(), color, ..Default::default() },
-                        );
-                    }
-                    if line.is_empty() {
-                        job.append(" ", 0.0, TextFormat { font_id: mono.clone(), ..Default::default() });
-                    }
-                    ui.label(job);
-                }
-            } else {
-                ui.label(egui::RichText::new(code).font(mono.clone()));
-            }
-        });
+fn opening_tag(tag: &str, fmt: Fmt) -> Option<(&'static str, Fmt)> {
+    let lower = tag.to_ascii_lowercase();
+    let mut next = fmt;
+    match lower.as_str() {
+        "b" => next.strong = true,
+        "i" => next.italics = true,
+        "u" => next.underline = true,
+        "s" => next.strike = true,
+        "url" | "user" => {
+            next.color = Some(Color32::from_rgb(96, 156, 255));
+            next.underline = true;
+        }
+        _ if lower.starts_with("url=") || lower.starts_with("user=") => {
+            next.color = Some(Color32::from_rgb(96, 156, 255));
+            next.underline = true;
+        }
+        _ if lower.starts_with("color=") => next.color = parse_hex(&tag[6..]).or(next.color),
+        _ if lower.starts_with("size=") => next.size = tag[5..].trim().parse::<f32>().ok()?,
+        _ => return None,
+    }
+    let closing_tag = match lower.split_once('=').map_or(lower.as_str(), |(name, _)| name) {
+        "b" => "b",
+        "i" => "i",
+        "u" => "u",
+        "s" => "s",
+        "url" => "url",
+        "user" => "user",
+        "color" => "color",
+        "size" => "size",
+        _ => return None,
+    };
+    Some((closing_tag, next))
 }
 
-fn token_color(ui: &Ui, kind: TokenKind) -> Color32 {
-    let dark = ui.visuals().dark_mode;
-    match kind {
-        TokenKind::Keyword => {
-            if dark { Color32::from_rgb(198, 120, 221) } else { Color32::from_rgb(150, 0, 150) }
+fn find_closing_tag(source: &str, tag: &str) -> Option<usize> {
+    let mut offset = 0;
+    let mut depth = 1;
+    while let Some(start) = source[offset..].find('[') {
+        let start = offset + start;
+        let end = source[start..].find(']')? + start;
+        let candidate = source[start + 1..end].to_ascii_lowercase();
+        if candidate == format!("/{tag}") {
+            depth -= 1;
+            if depth == 0 {
+                return Some(start);
+            }
+        } else if candidate == tag || candidate.starts_with(&format!("{tag}=")) {
+            depth += 1;
         }
-        TokenKind::String => {
-            if dark { Color32::from_rgb(152, 195, 121) } else { Color32::from_rgb(0, 128, 0) }
-        }
-        TokenKind::Comment => {
-            if dark { Color32::from_rgb(106, 115, 125) } else { Color32::from_rgb(128, 128, 128) }
-        }
-        TokenKind::Number => {
-            if dark { Color32::from_rgb(209, 154, 102) } else { Color32::from_rgb(170, 85, 0) }
-        }
-        TokenKind::Plain => ui.visuals().text_color(),
+        offset = end + 1;
     }
+    None
 }
 
-fn append_inlines(ui: &Ui, job: &mut LayoutJob, inlines: &[InlineNode], fmt: Fmt) {
-    for node in inlines {
-        match node {
-            InlineNode::Text(t) => job.append(t, 0.0, fmt.text_format(ui)),
-            InlineNode::Bold(c) => {
-                let mut f = fmt;
-                f.strong = true;
-                append_inlines(ui, job, c, f);
-            }
-            InlineNode::Italic(c) => {
-                let mut f = fmt;
-                f.italics = true;
-                append_inlines(ui, job, c, f);
-            }
-            InlineNode::Underline(c) => {
-                let mut f = fmt;
-                f.underline = true;
-                append_inlines(ui, job, c, f);
-            }
-            InlineNode::Strike(c) => {
-                let mut f = fmt;
-                f.strike = true;
-                append_inlines(ui, job, c, f);
-            }
-            InlineNode::Link { text, url } => {
-                let mut f = fmt;
-                f.color = Some(Color32::from_rgb(96, 156, 255));
-                f.underline = true;
-                if text.is_empty() {
-                    job.append(url, 0.0, f.text_format(ui));
-                } else {
-                    append_inlines(ui, job, text, f);
-                }
-            }
-            InlineNode::User { text, .. } => {
-                let mut f = fmt;
-                f.color = Some(Color32::from_rgb(96, 156, 255));
-                append_inlines(ui, job, text, f);
-            }
-            InlineNode::Color { hex, content } => {
-                let mut f = fmt;
-                f.color = parse_hex(hex).or(f.color);
-                append_inlines(ui, job, content, f);
-            }
-            InlineNode::Size { px, content } => {
-                let mut f = fmt;
-                f.size = *px as f32;
-                append_inlines(ui, job, content, f);
-            }
-            InlineNode::Icon { url, .. } => {
-                let mut f = fmt;
-                f.color = Some(Color32::from_rgb(150, 150, 220));
-                job.append(&format!("◆ {url}"), 0.0, f.text_format(ui));
-            }
-            InlineNode::Image { url, alt, .. } => {
-                let mut f = fmt;
-                f.color = Some(Color32::from_rgb(96, 156, 255));
-                let label = if alt.is_empty() { format!("🖼 {url}") } else { format!("🖼 {alt}") };
-                job.append(&label, 0.0, f.text_format(ui));
-            }
-            InlineNode::Code(code) => {
-                let mut f = fmt;
-                f.code = true;
-                job.append(code, 0.0, f.text_format(ui));
-            }
-            InlineNode::SoftBreak | InlineNode::HardBreak => {
-                job.append("\n", 0.0, fmt.text_format(ui));
-            }
-        }
+fn icon_tag(tag: &str, fmt: Fmt) -> Option<Fmt> {
+    tag.to_ascii_lowercase().starts_with("icon=").then(|| Fmt {
+        color: Some(Color32::from_rgb(150, 150, 220)),
+        ..fmt
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn matches_nested_identical_tags() {
+        assert_eq!(find_closing_tag("outer [b]inner[/b] tail[/b]", "b"), Some(23));
     }
+
+    #[test]
+    fn accepts_only_bitrix_preview_tags() {
+        assert!(opening_tag("color=#ff0000", Fmt::base(16.0)).is_some());
+        assert!(opening_tag("url=https://example.com", Fmt::base(16.0)).is_some());
+        assert!(opening_tag("img=https://example.com/image.png", Fmt::base(16.0)).is_none());
+    }
+
 }

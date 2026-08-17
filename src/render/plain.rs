@@ -56,7 +56,7 @@ impl PlainRenderer<'_> {
                 }
                 lines.join("\n")
             }
-            BlockNode::Table { rows } => rows
+            BlockNode::Table { rows, .. } => rows
                 .iter()
                 .map(|row| {
                     let cells = row.iter().map(|cell| self.render_inlines(cell)).collect::<Vec<_>>();

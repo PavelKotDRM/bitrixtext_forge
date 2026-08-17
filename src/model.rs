@@ -49,13 +49,20 @@ pub enum InlineNode {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum TableAlignment {
+    Left,
+    Center,
+    Right,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum BlockNode {
     Paragraph(Vec<InlineNode>),
     Heading { level: u8, content: Vec<InlineNode> },
     Quote(Vec<BlockNode>),
     CodeBlock { language: Option<String>, code: String },
     List { ordered: bool, start: u64, items: Vec<Vec<BlockNode>> },
-    Table { rows: Vec<Vec<Vec<InlineNode>>> },
+    Table { rows: Vec<Vec<Vec<InlineNode>>>, alignments: Vec<TableAlignment> },
     Image { url: String, alt: String, size: Option<ImageSize> },
     HorizontalRule,
 }

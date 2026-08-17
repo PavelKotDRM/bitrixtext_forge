@@ -9,7 +9,6 @@ use std::time::Instant;
 use egui::text::{CCursor, CCursorRange};
 
 use crate::diagnostics::{Diagnostics, Severity};
-use crate::model::Document;
 use crate::parser::parse_markdown;
 use crate::profiles::ProfileKind;
 use crate::render;
@@ -57,7 +56,6 @@ pub struct ForgeApp {
 
     markdown: String,
     output: String,
-    document: Document,
     diagnostics: Diagnostics,
 
     profile: ProfileKind,
@@ -99,7 +97,6 @@ impl ForgeApp {
             profile,
             markdown: session.markdown,
             output: String::new(),
-            document: Document::default(),
             diagnostics: Diagnostics::default(),
             file_path: session.file_path,
             doc_modified: false,
@@ -135,7 +132,6 @@ impl ForgeApp {
         let mut diags = parsed.diagnostics;
         diags.extend(res.diagnostics);
         self.diagnostics = diags;
-        self.document = parsed.document;
         self.needs_convert = false;
     }
 
@@ -481,7 +477,7 @@ impl ForgeApp {
                             area = area.vertical_scroll_offset(offset);
                         }
                         let out = area.show(ui, |ui| {
-                            preview::show_preview(ui, &self.document, &self.settings);
+                            preview::show_preview(ui, &self.output, &self.settings);
                         });
                         Some(pane_scroll(&out))
                     }
