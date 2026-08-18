@@ -20,6 +20,45 @@ use dialogs::{DialogKind, DialogResult, InsertDialog, TemplateEvent, TemplatesUi
 
 const EDITOR_ID: &str = "md_editor";
 
+fn install_unicode_fonts(ctx: &egui::Context) {
+    let mut database = fontdb::Database::new();
+    database.load_system_fonts();
+
+    let mut definitions = egui::FontDefinitions::default();
+    for family_name in [
+        "Segoe UI",
+        "Segoe UI Symbol",
+        "Segoe UI Emoji",
+        "Microsoft YaHei UI",
+        "Meiryo UI",
+        "Malgun Gothic",
+        "Arial Unicode MS",
+        "Noto Sans",
+        "Noto Sans CJK SC",
+        "Noto Sans CJK JP",
+        "Noto Sans CJK KR",
+        "Noto Color Emoji",
+        "DejaVu Sans",
+    ] {
+        let query = fontdb::Query {
+            families: &[fontdb::Family::Name(family_name)],
+            ..Default::default()
+        };
+        let Some(face_id) = database.query(&query) else {
+            continue;
+        };
+        let font_name = format!("unicode-{family_name}");
+        let Some(font_data) = database.with_face_data(face_id, |data, _| data.to_vec()) else {
+            continue;
+        };
+
+        definitions.font_data.insert(font_name.clone(), egui::FontData::from_owned(font_data).into());
+        definitions.families.entry(egui::FontFamily::Proportional).or_default().push(font_name.clone());
+        definitions.families.entry(egui::FontFamily::Monospace).or_default().push(font_name);
+    }
+    ctx.set_fonts(definitions);
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Tab {
     Bbcode,
@@ -90,6 +129,7 @@ impl ForgeApp {
         let user_templates = storage.load_user_templates().unwrap_or_default();
         let session = storage.load_session().ok().flatten().unwrap_or_default();
 
+        install_unicode_fonts(&cc.egui_ctx);
         apply_theme(&cc.egui_ctx, settings.theme);
 
         let profile = session.profile.unwrap_or(settings.default_profile);
