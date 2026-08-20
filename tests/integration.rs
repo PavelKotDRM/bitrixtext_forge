@@ -229,6 +229,19 @@ fn task_lists_and_nested_markdown_keep_structure() {
 }
 
 #[test]
+fn indented_nested_lists_keep_structure() {
+    let md = "    + Create a list by starting a line with `+`, `-`, or `*`\n    + Sub-lists are made by indenting 2 spaces:\n     - Marker character change forces new list start:\n        * Ac tristique libero volutpat at\n        + Facilisis in pretium nisl aliquet\n        - Nulla volutpat aliquam velit\n    + Very easy!";
+    let plain_expected = "• Create a list by starting a line with +, -, or *\n• Sub-lists are made by indenting 2 spaces:\n    • Marker character change forces new list start:\n        • Ac tristique libero volutpat at\n        • Facilisis in pretium nisl aliquet\n        • Nulla volutpat aliquam velit\n• Very easy!";
+
+    assert_eq!(
+        convert(md, ProfileKind::Full),
+        "• Create a list by starting a line with [b]+[/b], [b]-[/b], or [b]*[/b]\n• Sub-lists are made by indenting 2 spaces:\n    • Marker character change forces new list start:\n        • Ac tristique libero volutpat at\n        • Facilisis in pretium nisl aliquet\n        • Nulla volutpat aliquam velit\n• Very easy!"
+    );
+    assert_eq!(convert(md, ProfileKind::CoreSafe), plain_expected);
+    assert_eq!(convert(md, ProfileKind::PlainText), plain_expected);
+}
+
+#[test]
 fn tables_use_supported_bbcode_only() {
     let md = "| Имя | Статус |\n| --- | --- |\n| **Иван** и *Пётр* | [Готово](https://example.com/status) |";
     let doc = parse_markdown(md).document;

@@ -123,6 +123,7 @@ impl FullRenderer<'_> {
         depth: usize,
     ) -> String {
         let indent = "    ".repeat(depth);
+        let nested_indent = "    ".repeat(depth + 1);
         let mut lines = Vec::new();
         for (index, item) in items.iter().enumerate() {
             let rendered = self.render_item_blocks(item, depth);
@@ -132,8 +133,12 @@ impl FullRenderer<'_> {
                 format!("{} ", self.opts.bullet_marker.as_str())
             };
             for (line_index, line) in rendered.iter().enumerate() {
-                let prefix = if line_index == 0 { marker.as_str() } else { "    " };
-                lines.push(format!("{indent}{prefix}{line}"));
+                if line_index > 0 && line.starts_with(&nested_indent) {
+                    lines.push(line.to_string());
+                } else {
+                    let prefix = if line_index == 0 { marker.as_str() } else { "    " };
+                    lines.push(format!("{indent}{prefix}{line}"));
+                }
             }
         }
         lines.join(self.br())
@@ -158,11 +163,10 @@ impl FullRenderer<'_> {
         for b in blocks {
             match b {
                 BlockNode::List { ordered, start, items } => {
-                    let nested_indent = "    ".repeat(depth + 1);
                     lines.extend(
                         self.render_list(*ordered, *start, items, depth + 1)
                             .split(self.br())
-                            .map(|line| line.trim_start_matches(&nested_indent).to_string()),
+                            .map(str::to_string),
                     );
                 }
                 other => {

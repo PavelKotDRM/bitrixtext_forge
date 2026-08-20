@@ -69,6 +69,7 @@ impl SafeRenderer<'_> {
             }
             BlockNode::List { ordered, start, items } => {
                 let indent = "    ".repeat(depth);
+                let nested_indent = "    ".repeat(depth + 1);
                 let mut lines = Vec::new();
                 for (i, item) in items.iter().enumerate() {
                     let marker = if *ordered {
@@ -76,9 +77,11 @@ impl SafeRenderer<'_> {
                     } else {
                         format!("{} ", self.opts.bullet_marker.as_str())
                     };
-                    let inner = self.render_blocks(item, depth + 1);
-                    for (j, line) in inner.split(self.br()).enumerate() {
-                        if j == 0 {
+                    let inner = self.render_item_blocks(item, depth);
+                    for (j, line) in inner.iter().enumerate() {
+                        if j > 0 && line.starts_with(&nested_indent) {
+                            lines.push(line.to_string());
+                        } else if j == 0 {
                             lines.push(format!("{indent}{marker}{line}"));
                         } else {
                             lines.push(format!("{indent}    {line}"));
@@ -98,6 +101,29 @@ impl SafeRenderer<'_> {
             }
             BlockNode::HorizontalRule => self.opts.hr_text.clone(),
         }
+    }
+
+    fn render_item_blocks(&mut self, blocks: &[BlockNode], depth: usize) -> Vec<String> {
+        let mut lines = Vec::new();
+        for block in blocks {
+            match block {
+                BlockNode::List { ordered, start, items } => lines.extend(
+                    self.render_block(
+                        &BlockNode::List { ordered: *ordered, start: *start, items: items.clone() },
+                        depth + 1,
+                    )
+                    .split(self.br())
+                    .map(str::to_string),
+                ),
+                other => lines.extend(
+                    self.render_block(other, depth).split(self.br()).map(str::to_string),
+                ),
+            }
+        }
+        if lines.is_empty() {
+            lines.push(String::new());
+        }
+        lines
     }
 
     fn warn_loss(&mut self, msg: &str) {

@@ -123,6 +123,7 @@ fn opening_tag(tag: &str, fmt: Fmt) -> Option<(&'static str, Fmt)> {
         "i" => next.italics = true,
         "u" => next.underline = true,
         "s" => next.strike = true,
+        "code" => next.code = true,
         "url" | "user" => {
             next.color = Some(Color32::from_rgb(96, 156, 255));
             next.underline = true;
@@ -140,6 +141,7 @@ fn opening_tag(tag: &str, fmt: Fmt) -> Option<(&'static str, Fmt)> {
         "i" => "i",
         "u" => "u",
         "s" => "s",
+        "code" => "code",
         "url" => "url",
         "user" => "user",
         "color" => "color",
@@ -189,6 +191,7 @@ mod tests {
     fn accepts_only_bitrix_preview_tags() {
         assert!(opening_tag("color=#ff0000", Fmt::base(16.0)).is_some());
         assert!(opening_tag("url=https://example.com", Fmt::base(16.0)).is_some());
+        assert!(opening_tag("code", Fmt::base(16.0)).is_some());
         assert!(opening_tag("img=https://example.com/image.png", Fmt::base(16.0)).is_none());
     }
 

@@ -130,8 +130,56 @@ fn normalize_tab_indented_fence_closers(input: &str) -> Cow<'_, str> {
     if changed { Cow::Owned(out) } else { Cow::Borrowed(input) }
 }
 
+/// Редакторы и примеры в документации иногда добавляют четыре пробела ко всему фрагменту
+/// списка. В CommonMark это превращает его в кодовый блок. Если строка явно начинает
+/// такой список, снимаем общий отступ в четыре пробела у всего непрерывного блока.
+fn normalize_indented_list_blocks(input: &str) -> Cow<'_, str> {
+    let mut changed = false;
+    let mut in_list_block = false;
+    let mut at_block_start = true;
+    let mut out = String::with_capacity(input.len());
+
+    for line in input.split_inclusive('\n') {
+        let content = line.trim_end_matches(['\r', '\n']);
+        let eol = &line[content.len()..];
+        let trimmed = content.trim_start_matches(' ');
+        let indent = content.len() - trimmed.len();
+        let is_list_item = matches!(trimmed.as_bytes(), [b'-' | b'+' | b'*', b' ', ..]);
+
+        if at_block_start && is_list_item && indent >= 4 {
+            in_list_block = true;
+        }
+
+        if !in_list_block {
+            out.push_str(line);
+            at_block_start = content.trim().is_empty();
+            continue;
+        }
+
+        if in_list_block && (content.trim().is_empty() || indent >= 4) {
+            let stripped = content.strip_prefix("    ").unwrap_or(content);
+            let normalized = if is_list_item && indent == 5 {
+                format!("  {}", stripped.trim_start_matches(' '))
+            } else {
+                stripped.to_string()
+            };
+            changed |= normalized != content;
+            out.push_str(&normalized);
+            out.push_str(eol);
+            at_block_start = false;
+        } else {
+            in_list_block = false;
+            out.push_str(line);
+            at_block_start = content.trim().is_empty();
+        }
+    }
+
+    if changed { Cow::Owned(out) } else { Cow::Borrowed(input) }
+}
+
 pub fn parse_markdown(input: &str) -> ParseResult {
     let input = normalize_tab_indented_fence_closers(input);
+    let input = normalize_indented_list_blocks(input.as_ref());
     let input = input.as_ref();
     let mut opts = Options::empty();
     opts.insert(Options::ENABLE_STRIKETHROUGH);
