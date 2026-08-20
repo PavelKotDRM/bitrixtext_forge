@@ -167,8 +167,7 @@ mod tests {
     #[test]
     fn settings_roundtrip() {
         let (s, dir) = temp_storage();
-        let mut cfg = AppSettings::default();
-        cfg.autosave_interval_secs = 99;
+        let cfg = AppSettings { autosave_interval_secs: 99, ..Default::default() };
         s.save_settings(&cfg).unwrap();
         let loaded = s.load_settings().unwrap();
         assert_eq!(loaded.autosave_interval_secs, 99);

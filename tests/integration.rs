@@ -2,6 +2,7 @@
 //! GUI-логика preview, объёмные документы, Unicode.
 
 use bitrixtext_forge::app::preview::show_preview;
+use bitrixtext_forge::model::BlockNode;
 use bitrixtext_forge::parser::parse_markdown;
 use bitrixtext_forge::profiles::{ProfileKind, RenderOptions};
 use bitrixtext_forge::render::render;
@@ -10,6 +11,68 @@ use bitrixtext_forge::settings::AppSettings;
 fn convert(md: &str, profile: ProfileKind) -> String {
     let doc = parse_markdown(md).document;
     render(&doc, profile, &RenderOptions::default()).output
+}
+
+#[test]
+fn trailing_tab_after_closing_fence_still_closes_the_code_block() {
+    // Таб ПОСЛЕ ``` на закрывающей строке тоже нарушает CommonMark-закрытие фенса
+    // (не только таб перед ним) — тот же класс бага, что и с ведущим табом.
+    let md = "# Headers\n\n```\n# h1 Heading 8-)\nAlt-H2\n------\n```\t\n";
+    let doc = parse_markdown(md).document;
+    match &doc.blocks[1] {
+        BlockNode::CodeBlock { code, .. } => {
+            assert_eq!(code, "# h1 Heading 8-)\nAlt-H2\n------", "закрывающий фенс не распознан: {doc:#?}");
+        }
+        other => panic!("ожидался CodeBlock, получено {other:?}"),
+    }
+}
+
+#[test]
+fn tab_indented_closing_fence_still_closes_the_code_block() {
+    // Реальный баг: редактор/буфер обмена иногда добавляет случайный таб перед закрывающим
+    // ```. Таб раскрывается в 4 колонки — по CommonMark это уже не валидный закрывающий фенс,
+    // и без нормализации весь остаток документа "проглатывается" как код без [/code].
+    let md = "# Headers\n\n```\n# h1 Heading 8-)\nAlt-H2\n------\n\t```\n";
+    let doc = parse_markdown(md).document;
+    match &doc.blocks[1] {
+        BlockNode::CodeBlock { code, .. } => {
+            assert_eq!(code, "# h1 Heading 8-)\nAlt-H2\n------", "закрывающий фенс не распознан: {doc:#?}");
+        }
+        other => panic!("ожидался CodeBlock, получено {other:?}"),
+    }
+    let out = convert(md, ProfileKind::Full);
+    assert_eq!(out, "[size=30][b]Headers[/b][/size]\n\n[code]\n# h1 Heading 8-)\nAlt-H2\n------\n[/code]");
+}
+
+#[test]
+fn tab_indentation_inside_code_content_is_preserved() {
+    // Таб внутри содержимого кода (не на строке-разделителе) не должен трогаться.
+    let md = "```\nfn f() {\n\treturn 1;\n}\n```";
+    let doc = parse_markdown(md).document;
+    match &doc.blocks[0] {
+        BlockNode::CodeBlock { code, .. } => assert!(code.contains("\treturn 1;")),
+        other => panic!("ожидался CodeBlock, получено {other:?}"),
+    }
+}
+
+#[test]
+fn code_block_with_markdown_headings_inside_is_always_closed() {
+    // Содержимое фенса — само по себе демонстрация Markdown-заголовков (ATX и setext),
+    // но т.к. это код внутри ``` ``` ```, оно не должно парситься как реальные заголовки,
+    // а [code] должен закрываться независимо от содержимого.
+    let md = "# Headers\n\n```\n# h1 Heading 8-)\n## h2 Heading\n### h3 Heading\n#### h4 Heading\n##### h5 Heading\n###### h6 Heading\n\nAlternatively, for H1 and H2, an underline-ish style:\n\nAlt-H1\n======\n\nAlt-H2\n------\n```";
+    let out = convert(md, ProfileKind::Full);
+    assert!(out.starts_with("[size=30][b]Headers[/b][/size]\n\n[code]\n"), "заголовок вне кода не сохранён: {out}");
+    assert!(out.trim_end().ends_with("[/code]"), "код должен закрываться [/code]: {out}");
+    assert!(out.contains("# h1 Heading 8-)"), "содержимое фенса должно остаться литеральным текстом: {out}");
+    assert!(!out.contains("[b]h1"), "заголовки внутри code fence не должны парситься: {out}");
+}
+
+#[test]
+fn code_block_with_crlf_line_endings_is_always_closed() {
+    let md = "# Headers\r\n\r\n```\r\n# h1 Heading 8-)\r\nAlt-H2\r\n------\r\n```\r\n";
+    let out = convert(md, ProfileKind::Full);
+    assert!(out.trim_end().ends_with("[/code]"), "код должен закрываться [/code] даже с CRLF: {out}");
 }
 
 #[test]
@@ -42,7 +105,7 @@ fn main() {
     assert!(out.contains("[i]краткие[/i]"));
     assert!(out.contains("[s]15[/s]"));
     assert!(out.contains("[url=https://example.com/release]v2.1[/url]"));
-    assert!(out.contains("    fn main() {"));
+    assert!(out.contains("[code]\nfn main() {"));
     assert!(out.contains(">>Отличная работа!"));
     assert!(out.contains("--------------------"));
     assert!(out.contains("[url=https://example.com/shot.png]скриншот[/url]"));
@@ -109,7 +172,8 @@ fn code_fallback_never_generates_code_tag() {
     let doc = parse_markdown("```python\ndef f():\n    return 'hi'\n```").document;
     let res = render(&doc, ProfileKind::ManualCodeHighlight, &RenderOptions::default());
     assert!(!res.output.contains("[code]"), "не должно быть [code]: {}", res.output);
-    assert_eq!(res.output, "    def f():\n        return 'hi'");
+    assert!(res.output.lines().all(|l| l.starts_with(">>")), "код должен быть выделен >>: {}", res.output);
+    assert!(res.output.contains("[color=#c678dd]def[/color]"), "ключевые слова должны подсвечиваться: {}", res.output);
 }
 
 #[test]
@@ -117,15 +181,18 @@ fn disabled_manual_highlight_still_uses_text_fallback() {
     let doc = parse_markdown("```python\nprint('hi')\n```").document;
     let opts = RenderOptions { manual_code_colors: false, ..Default::default() };
     let res = render(&doc, ProfileKind::ManualCodeHighlight, &opts);
-    assert_eq!(res.output, "    print('hi')");
+    assert_eq!(res.output, ">>    print('hi')");
     assert!(!res.output.contains("[code]"));
+    assert!(!res.output.contains("[color="));
 }
 
 #[test]
 fn markdown_conversion_generates_only_allowed_tags() {
     let md = "# H\n\n**b** *i* ~~s~~ [text](https://e.com)\n\n![image](https://e.com/i.png)\n\n```\nlet x = 1;\n```";
     let out = convert(md, ProfileKind::Full);
-    for tag in ["[code", "[img", "[timestamp", "[disk", "[br", "[list", "[hr", "[color", "[size", "[icon"] {
+    assert!(out.contains("[code]") && out.contains("[/code]"), "[code] should be generated by Full profile: {out}");
+    assert!(out.contains("[size=30]"), "H1 should use the configured heading size: {out}");
+    for tag in ["[img", "[timestamp", "[disk", "[br", "[list", "[hr", "[color", "[icon"] {
         assert!(!out.contains(tag), "unsupported tag was generated: {tag}: {out}");
     }
 }
@@ -164,29 +231,32 @@ fn task_lists_and_nested_markdown_keep_structure() {
 #[test]
 fn tables_use_supported_bbcode_only() {
     let md = "| Имя | Статус |\n| --- | --- |\n| **Иван** и *Пётр* | [Готово](https://example.com/status) |";
-    let out = convert(md, ProfileKind::Full);
-    assert!(out.starts_with("[code]") && out.ends_with("[/code]"), "table is not wrapped in [code]: {out}");
-    assert!(out.contains("Иван и Пётр"), "table text is missing: {out}");
-    assert!(out.contains("Готово"), "table link text is missing: {out}");
-    for tag in ["[b]", "[i]", "[u]", "[s]", "[url]", "[url=", "[user=", "[table]", "[tr]", "[td]", "[list]", "[hr]"] {
-        assert!(!out.contains(tag), "BBCode formatting was generated in a table: {tag}: {out}");
+    let doc = parse_markdown(md).document;
+    let res = render(&doc, ProfileKind::Full, &RenderOptions::default());
+    let out = res.output;
+    assert!(out.contains("table_1.xlsx"), "table filename reference is missing: {out}");
+    for tag in ["[table]", "[tr]", "[td]", "[list]", "[hr]"] {
+        assert!(!out.contains(tag), "unsupported BBCode tag leaked into output: {tag}: {out}");
     }
+    assert_eq!(res.tables.len(), 1, "table data should be extracted for xlsx export");
+    let table = &res.tables[0];
+    assert!(table.rows.iter().flatten().any(|cell| cell.contains("Иван и Пётр")));
+    assert!(table.rows.iter().flatten().any(|cell| cell.contains("Готово")));
 
     let core_safe_out = convert(md, ProfileKind::CoreSafe);
+    assert!(core_safe_out.contains("table_1.xlsx"));
     for tag in ["[b]", "[i]", "[u]", "[s]", "[url]", "[url=", "[user="] {
         assert!(!core_safe_out.contains(tag), "BBCode formatting was generated in a Core Safe table: {tag}: {core_safe_out}");
     }
 }
 
 #[test]
-fn tables_align_all_rows_by_bbcode_width() {
-    let md = "| Command | Description |\n| --- | --- |\n| git status | List all new or modified files |\n| git diff | Show file differences that haven't been staged |";
-    let out = convert(md, ProfileKind::Full);
-    let table = out
-        .strip_prefix("[code]")
-        .and_then(|text| text.strip_suffix("[/code]"))
-        .expect("table must be wrapped in [code]");
-    assert!(out.contains("Show file differences that haven't"), "long description was not wrapped: {out}");
-    assert!(out.contains("been staged"), "long description tail is missing: {out}");
-    assert!(table.lines().all(|line| line.starts_with('+') || line.starts_with('|')), "table structure is malformed: {out}");
+fn tables_are_numbered_sequentially_and_extracted_for_export() {
+    let md = "| A | B |\n| --- | --- |\n| 1 | 2 |\n\n| C | D |\n| --- | --- |\n| 3 | 4 |";
+    let doc = parse_markdown(md).document;
+    let res = render(&doc, ProfileKind::Full, &RenderOptions::default());
+    assert!(res.output.contains("table_1.xlsx"));
+    assert!(res.output.contains("table_2.xlsx"));
+    assert_eq!(res.tables.len(), 2);
 }
+

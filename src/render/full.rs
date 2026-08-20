@@ -1,33 +1,31 @@
 //! Renderer: Bitrix24 Full Message Profile.
 //!
 //! Генерирует полный документированный BBCode Bitrix24.
-//! В режиме `manual_code` дополнительно оформляет код пустыми строками
-//! и предупреждает о непереносимости GUI-подсветки.
+//! В режиме `manual_code` код визуально выделяется префиксом `>>` и, при
+//! включённой опции `manual_code_colors`, дополнительно окрашивается через
+//! `[color]`-токены (см. `highlight::highlight_code_to_bbcode`).
 
 use crate::diagnostics::{Diagnostic, Diagnostics};
+use crate::highlight::highlight_code_to_bbcode;
 use crate::model::{BlockNode, Document, InlineNode, TableAlignment};
 use crate::parser::plain_text_of;
 use crate::profiles::{LineBreakStyle, RenderOptions};
+use crate::tables::{ExtractedTable, table_file_name};
 
 use super::RenderResult;
 
 pub fn render(doc: &Document, opts: &RenderOptions, manual_code: bool) -> RenderResult {
-    let mut r = FullRenderer { opts, manual_code, diags: Diagnostics::default() };
+    let mut r = FullRenderer { opts, manual_code, diags: Diagnostics::default(), tables: Vec::new() };
     let output = r.render_blocks(&doc.blocks, 0);
-    RenderResult { output, diagnostics: r.diags }
+    RenderResult { output, diagnostics: r.diags, tables: r.tables }
 }
 
 struct FullRenderer<'a> {
     opts: &'a RenderOptions,
     manual_code: bool,
     diags: Diagnostics,
+    tables: Vec<ExtractedTable>,
 }
-
-const MAX_TABLE_COLUMN_WIDTH: usize = 36;
-const SPACE_WIDTH: usize = 4;
-const DASH_WIDTH: usize = 5;
-const PLUS_WIDTH: usize = 9;
-const PIPE_WIDTH: usize = 4;
 
 impl FullRenderer<'_> {
     fn br(&self) -> &'static str {
@@ -48,14 +46,9 @@ impl FullRenderer<'_> {
     fn render_block(&mut self, block: &BlockNode, depth: usize) -> String {
         match block {
             BlockNode::Paragraph(inlines) => self.render_inlines(inlines),
-            BlockNode::Heading { content, .. } => format!("[b]{}[/b]", self.render_inlines(content)),
+            BlockNode::Heading { level, content } => self.render_heading(*level, content),
             BlockNode::Quote(blocks) => self.render_quote(blocks),
-            BlockNode::CodeBlock { code, .. } => {
-                self.diags.push(Diagnostic::info(
-                    "Блок кода выведен обычным текстом: тег [code] не входит в поддерживаемый набор.",
-                ));
-                code.lines().map(|line| format!("    {line}")).collect::<Vec<_>>().join(self.br())
-            }
+            BlockNode::CodeBlock { language, code } => self.render_code_block(language.as_deref(), code),
             BlockNode::List { ordered, start, items } => {
                 self.render_list(*ordered, *start, items, depth)
             }
@@ -65,19 +58,61 @@ impl FullRenderer<'_> {
         }
     }
 
+    /// Заголовок: `[b]...[/b]`, обёрнутый в `[size=N]`, если для этого уровня задан размер
+    /// (`opts.heading_sizes`); `0` (по умолчанию для H4-H6) означает только жирный текст.
+    fn render_heading(&mut self, level: u8, content: &[InlineNode]) -> String {
+        let text = self.render_inlines(content);
+        let size = self.opts.heading_sizes.get(level.saturating_sub(1) as usize).copied().unwrap_or(0);
+        if size > 0 {
+            format!("[size={size}][b]{text}[/b][/size]")
+        } else {
+            format!("[b]{text}[/b]")
+        }
+    }
+
     fn render_quote(&mut self, blocks: &[BlockNode]) -> String {
         // внутри цитаты всегда реальные переносы, т.к. `>>` работает только в начале строки
         let inner_opts = RenderOptions { line_break: LineBreakStyle::Newline, ..self.opts.clone() };
-        let mut inner_renderer =
-            FullRenderer { opts: &inner_opts, manual_code: self.manual_code, diags: Diagnostics::default() };
+        let mut inner_renderer = FullRenderer {
+            opts: &inner_opts,
+            manual_code: self.manual_code,
+            diags: Diagnostics::default(),
+            tables: std::mem::take(&mut self.tables),
+        };
         let inner = inner_renderer.render_blocks(blocks, 0);
         self.diags.extend(inner_renderer.diags);
+        self.tables = inner_renderer.tables;
 
         inner
             .lines()
             .map(|line| format!(">>{}", line.trim_start_matches('>')))
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    /// Оформление блока кода. Вне ручного режима — документированный `[code]...[/code]`
+    /// (без подсветки синтаксиса, Bitrix24 её внутри тега не поддерживает).
+    /// В `manual_code` код вместо этого визуально выделяется префиксом `>>` (как цитата),
+    /// а при включённой опции `manual_code_colors` токены дополнительно оборачиваются
+    /// в `[color]` (GUI-only приближение подсветки, без гарантии в Bitrix24).
+    fn render_code_block(&mut self, language: Option<&str>, code: &str) -> String {
+        if !self.manual_code {
+            self.diags.push(Diagnostic::info(
+                "Блок кода обёрнут в [code]: Bitrix24 не подсвечивает синтаксис внутри тега.",
+            ));
+            return format!("[code]{sep}{code}{sep}[/code]", sep = self.br());
+        }
+        self.diags.push(Diagnostic::info(
+            "Код визуально выделен префиксом «>>»: подсветка синтаксиса не гарантируется Bitrix24.",
+        ));
+        if self.opts.manual_code_colors {
+            highlight_code_to_bbcode(language.unwrap_or(""), code)
+        } else {
+            code.lines()
+                .map(|line| if line.is_empty() { ">>".to_string() } else { format!(">>    {line}") })
+                .collect::<Vec<_>>()
+                .join("\n")
+        }
     }
 
     fn render_list(
@@ -105,77 +140,16 @@ impl FullRenderer<'_> {
     }
 
     fn render_table(&mut self, rows: &[Vec<Vec<InlineNode>>], alignments: &[TableAlignment]) -> String {
-        self.diags.push(Diagnostic::info(
-            "Таблица Markdown выведена в контейнере [code]: теги [table], [tr] и [td] не поддерживаются Bitrix24.",
-        ));
+        let name = table_file_name(self.tables.len());
+        self.diags.push(Diagnostic::info(format!(
+            "Таблица Markdown сохранена в отдельный файл Excel «{name}»: теги [table], [tr] и [td] не поддерживаются Bitrix24."
+        )));
         let rendered_rows = rows
             .iter()
-            .map(|row| {
-                row.iter()
-                    .map(|cell| plain_text_of(cell).replace(['\n', '\r'], " "))
-                    .collect::<Vec<_>>()
-            })
-            .collect::<Vec<_>>();
-        let column_count = rendered_rows.iter().map(Vec::len).max().unwrap_or(0);
-        let mut widths = vec![0; column_count];
-        for row in &rendered_rows {
-            for (column, content) in row.iter().enumerate() {
-                let content_width = content.chars().count();
-                let longest_word_width = content
-                    .split_whitespace()
-                    .map(|word| word.chars().count())
-                    .max()
-                    .unwrap_or(0);
-                let target_width = content_width.min(MAX_TABLE_COLUMN_WIDTH).max(longest_word_width);
-                widths[column] = widths[column].max(target_width);
-            }
-        }
-        let wrapped_rows = rendered_rows
-            .iter()
-            .map(|row| {
-                widths
-                    .iter()
-                    .enumerate()
-                    .map(|(column, width)| match row.get(column) {
-                        Some(content) => wrap_table_cell(content, *width),
-                        None => vec![String::new()],
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .collect::<Vec<_>>();
-        let mut visual_widths = vec![0; column_count];
-        for row in &wrapped_rows {
-            for (column, cell_lines) in row.iter().enumerate() {
-                for line in cell_lines {
-                    visual_widths[column] = visual_widths[column].max(estimated_text_width(line));
-                }
-            }
-        }
-        let border = format_table_border(&visual_widths);
-        let mut lines = vec![border.clone()];
-        for (row_index, wrapped_cells) in wrapped_rows.iter().enumerate() {
-            let row_height = wrapped_cells.iter().map(Vec::len).max().unwrap_or(1);
-            for line_index in 0..row_height {
-                let cells = visual_widths
-                    .iter()
-                    .enumerate()
-                    .map(|(column, width)| {
-                        let content = wrapped_cells[column].get(line_index).map_or("", String::as_str);
-                        format_table_cell(
-                            content,
-                            *width,
-                            alignments.get(column).unwrap_or(&TableAlignment::Left),
-                        )
-                    })
-                    .collect::<Vec<_>>();
-                lines.push(format!("|{}|", cells.join("|")));
-            }
-            if row_index == 0 {
-                lines.push(border.clone());
-            }
-        }
-        lines.push(border);
-        format!("[code]{}[/code]", lines.join(self.br()))
+            .map(|row| row.iter().map(|cell| plain_text_of(cell).replace(['\n', '\r'], " ")).collect())
+            .collect();
+        self.tables.push(ExtractedTable { rows: rendered_rows, alignments: alignments.to_vec() });
+        format!("[b]Таблица:[/b] {name}")
     }
 
     /// Рендер блоков элемента списка в набор строк.
@@ -277,69 +251,6 @@ impl FullRenderer<'_> {
     }
 }
 
-fn wrap_table_cell(content: &str, width: usize) -> Vec<String> {
-    if content.chars().count() <= width {
-        return vec![content.to_string()];
-    }
-
-    let mut lines = Vec::new();
-    let mut line = String::new();
-    for word in content.split_whitespace() {
-        if !line.is_empty() && line.chars().count() + 1 + word.chars().count() > width {
-            lines.push(std::mem::take(&mut line));
-        }
-        if !line.is_empty() {
-            line.push(' ');
-        }
-        line.push_str(word);
-    }
-    if !line.is_empty() {
-        lines.push(line);
-    }
-    if lines.is_empty() {
-        lines.push(String::new());
-    }
-    lines
-}
-
-fn estimated_text_width(text: &str) -> usize {
-    text.chars()
-        .map(|character| match character {
-            ' ' => SPACE_WIDTH,
-            'i' | 'j' | 'l' | 't' | 'I' | '1' | '.' | ',' | ':' | ';' | '!' | '\'' | '|' => 3,
-            'm' | 'w' | 'M' | 'W' | '@' | '%' | '&' => 10,
-            '-' => DASH_WIDTH,
-            '+' => PLUS_WIDTH,
-            '0'..='9' => 7,
-            'A'..='Z' | 'А'..='Я' | 'Ё' => 8,
-            'a'..='z' | 'а'..='я' | 'ё' => 7,
-            _ => 8,
-        })
-        .sum()
-}
-
-fn format_table_border(widths: &[usize]) -> String {
-    let segments = widths
-        .iter()
-        .map(|width| {
-            let row_segment_width = PIPE_WIDTH + 2 * SPACE_WIDTH + width;
-            "-".repeat(row_segment_width.div_ceil(DASH_WIDTH).max(1))
-        })
-        .collect::<Vec<_>>();
-    format!("+{}+", segments.join("+"))
-}
-
-fn format_table_cell(content: &str, width: usize, alignment: &TableAlignment) -> String {
-    let padding_width = width.saturating_sub(estimated_text_width(content));
-    let padding_spaces = padding_width.div_ceil(SPACE_WIDTH);
-    let (left_padding, right_padding) = match alignment {
-        TableAlignment::Left => (0, padding_spaces),
-        TableAlignment::Center => (padding_spaces / 2, padding_spaces - padding_spaces / 2),
-        TableAlignment::Right => (padding_spaces, 0),
-    };
-    format!(" {}{content}{} ", " ".repeat(left_padding), " ".repeat(right_padding))
-}
-
 #[allow(dead_code)]
 fn alt_or_url(nodes: &[InlineNode], url: &str) -> String {
     let t = plain_text_of(nodes);
@@ -351,24 +262,6 @@ mod tests {
     use super::*;
     use crate::parser::parse_markdown;
     use crate::profiles::{BulletMarker, QuoteStyle};
-
-    #[test]
-    fn table_border_segments_cover_their_cell_widths() {
-        let widths = [16, 31];
-        let border = format_table_border(&widths);
-
-        for (segment, width) in border.trim_matches('+').split('+').zip(widths) {
-            let row_segment_width = PIPE_WIDTH + 2 * SPACE_WIDTH + width;
-            assert!(estimated_text_width(segment) >= row_segment_width);
-        }
-    }
-
-    #[test]
-    fn table_cells_use_the_requested_alignment() {
-        assert_eq!(format_table_cell("x", 12, &TableAlignment::Left), " x   ");
-        assert_eq!(format_table_cell("x", 12, &TableAlignment::Center), "  x  ");
-        assert_eq!(format_table_cell("x", 12, &TableAlignment::Right), "   x ");
-    }
 
     fn render_md(input: &str) -> String {
         let doc = parse_markdown(input).document;
@@ -407,17 +300,25 @@ mod tests {
     }
 
     #[test]
-    fn headings_use_bold_only() {
-        assert_eq!(render_md("# H"), "[b]H[/b]");
-        assert_eq!(render_md("## H"), "[b]H[/b]");
-        assert_eq!(render_md("### H"), "[b]H[/b]");
+    fn headings_use_configured_size_by_default() {
+        // дефолтные heading_sizes = [30, 24, 20, 0, 0, 0]
+        assert_eq!(render_md("# H"), "[size=30][b]H[/b][/size]");
+        assert_eq!(render_md("## H"), "[size=24][b]H[/b][/size]");
+        assert_eq!(render_md("### H"), "[size=20][b]H[/b][/size]");
         assert_eq!(render_md("#### H"), "[b]H[/b]");
     }
 
     #[test]
-    fn heading_size_setting_is_not_rendered() {
+    fn heading_size_setting_is_rendered() {
         let mut opts = RenderOptions::default();
         opts.heading_sizes[0] = 99;
+        assert_eq!(render_md_opts("# H", &opts), "[size=99][b]H[/b][/size]");
+    }
+
+    #[test]
+    fn heading_size_zero_is_bold_only() {
+        let mut opts = RenderOptions::default();
+        opts.heading_sizes[0] = 0;
         assert_eq!(render_md_opts("# H", &opts), "[b]H[/b]");
     }
 
@@ -439,7 +340,7 @@ mod tests {
 
     #[test]
     fn code_block() {
-        assert_eq!(render_md("```\nlet x = 1;\n```"), "    let x = 1;");
+        assert_eq!(render_md("```\nlet x = 1;\n```"), "[code]\nlet x = 1;\n[/code]");
     }
 
     #[test]
@@ -448,11 +349,30 @@ mod tests {
     }
 
     #[test]
-    fn code_block_falls_back_without_code_tag() {
+    fn code_block_uses_code_tag_without_syntax_highlighting() {
         let doc = parse_markdown("```rust\nfn f() {}\n```").document;
         let res = render(&doc, &RenderOptions::default(), false);
+        assert_eq!(res.output, "[code]\nfn f() {}\n[/code]");
+        assert!(res.diagnostics.items.iter().any(|d| d.message.contains("не подсвечивает синтаксис")));
+    }
+
+    #[test]
+    fn manual_code_highlight_uses_quote_prefix_and_colors() {
+        let doc = parse_markdown("```csharp\npublic class Foo {}\n```").document;
+        let res = render(&doc, &RenderOptions::default(), true);
         assert!(!res.output.contains("[code]"));
-        assert!(res.diagnostics.items.iter().any(|d| d.message.contains("не входит")));
+        assert!(res.output.lines().all(|l| l.starts_with(">>")), "код без >>: {}", res.output);
+        assert!(res.output.contains("[color=#c678dd]public[/color]"));
+        assert!(res.output.contains("[color=#c678dd]class[/color]"));
+    }
+
+    #[test]
+    fn manual_code_highlight_without_colors_still_uses_quote_prefix() {
+        let doc = parse_markdown("```csharp\npublic class Foo {}\n```").document;
+        let opts = RenderOptions { manual_code_colors: false, ..Default::default() };
+        let res = render(&doc, &opts, true);
+        assert!(!res.output.contains("[color="));
+        assert_eq!(res.output, ">>    public class Foo {}");
     }
 
     #[test]

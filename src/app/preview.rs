@@ -97,12 +97,12 @@ fn append_bbcode(ui: &Ui, job: &mut LayoutJob, source: &str, fmt: Fmt) {
         };
         let tag = &remaining[1..close];
         let after_open = &remaining[close + 1..];
-        if let Some((closing_tag, next_fmt)) = opening_tag(tag, fmt) {
-            if let Some(content_end) = find_closing_tag(after_open, closing_tag) {
-                append_bbcode(ui, job, &after_open[..content_end], next_fmt);
-                remaining = &after_open[content_end + closing_tag.len() + 3..];
-                continue;
-            }
+        if let Some((closing_tag, next_fmt)) = opening_tag(tag, fmt)
+            && let Some(content_end) = find_closing_tag(after_open, closing_tag)
+        {
+            append_bbcode(ui, job, &after_open[..content_end], next_fmt);
+            remaining = &after_open[content_end + closing_tag.len() + 3..];
+            continue;
         }
         if let Some(icon_fmt) = icon_tag(tag, fmt) {
             job.append("◆", 0.0, icon_fmt.text_format(ui));

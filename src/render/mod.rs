@@ -7,10 +7,12 @@ pub mod safe;
 use crate::diagnostics::Diagnostics;
 use crate::model::Document;
 use crate::profiles::{ProfileKind, RenderOptions};
+use crate::tables::ExtractedTable;
 
 pub struct RenderResult {
     pub output: String,
     pub diagnostics: Diagnostics,
+    pub tables: Vec<ExtractedTable>,
 }
 
 pub fn render(doc: &Document, profile: ProfileKind, opts: &RenderOptions) -> RenderResult {

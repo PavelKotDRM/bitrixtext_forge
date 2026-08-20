@@ -14,6 +14,7 @@ use crate::profiles::ProfileKind;
 use crate::render;
 use crate::settings::{AppSettings, Theme};
 use crate::storage::{RecentFiles, SessionState, Storage, export_json, read_document, write_document};
+use crate::tables::{ExtractedTable, write_tables_xlsx};
 use crate::templates::{Template, builtin_templates};
 
 use dialogs::{DialogKind, DialogResult, InsertDialog, TemplateEvent, TemplatesUi};
@@ -96,6 +97,7 @@ pub struct ForgeApp {
     markdown: String,
     output: String,
     diagnostics: Diagnostics,
+    pending_tables: Vec<ExtractedTable>,
 
     profile: ProfileKind,
     file_path: Option<PathBuf>,
@@ -138,6 +140,7 @@ impl ForgeApp {
             markdown: session.markdown,
             output: String::new(),
             diagnostics: Diagnostics::default(),
+            pending_tables: Vec::new(),
             file_path: session.file_path,
             doc_modified: false,
             needs_convert: true,
@@ -169,27 +172,45 @@ impl ForgeApp {
         let opts = self.settings.render_options();
         let res = render::render(&parsed.document, self.profile, &opts);
         self.output = res.output;
+        self.pending_tables = res.tables;
         let mut diags = parsed.diagnostics;
         diags.extend(res.diagnostics);
         self.diagnostics = diags;
         self.needs_convert = false;
     }
 
+    /// Сохраняет таблицы, извлечённые при последней конвертации, в отдельные `.xlsx`-файлы
+    /// рядом с указанным файлом (имена вида `table_1.xlsx`, `table_2.xlsx`, ...).
+    fn write_pending_tables(&mut self, near: &std::path::Path) {
+        if self.pending_tables.is_empty() {
+            return;
+        }
+        let Some(dir) = near.parent() else { return };
+        match write_tables_xlsx(&self.pending_tables, dir) {
+            Ok(paths) => {
+                self.status_message =
+                    format!("{} (таблиц сохранено: {})", self.status_message, paths.len());
+            }
+            Err(e) => self.status_message = format!("{}; ошибка сохранения таблиц: {e}", self.status_message),
+        }
+    }
+
+
     fn insert_snippet(&mut self, ctx: &egui::Context, snippet: &str) {
         let id = egui::Id::new(EDITOR_ID);
-        if let Some(mut state) = egui::text_edit::TextEditState::load(ctx, id) {
-            if let Some(range) = state.cursor.char_range() {
-                let (a, b) = (range.primary.index.0, range.secondary.index.0);
-                let (min, max) = (a.min(b), a.max(b));
-                let start = char_to_byte(&self.markdown, min);
-                let end = char_to_byte(&self.markdown, max);
-                self.markdown.replace_range(start..end, snippet);
-                let pos = min + snippet.chars().count();
-                state.cursor.set_char_range(Some(CCursorRange::one(CCursor::new(pos))));
-                state.store(ctx, id);
-                self.mark_changed();
-                return;
-            }
+        if let Some(mut state) = egui::text_edit::TextEditState::load(ctx, id)
+            && let Some(range) = state.cursor.char_range()
+        {
+            let (a, b) = (range.primary.index.0, range.secondary.index.0);
+            let (min, max) = (a.min(b), a.max(b));
+            let start = char_to_byte(&self.markdown, min);
+            let end = char_to_byte(&self.markdown, max);
+            self.markdown.replace_range(start..end, snippet);
+            let pos = min + snippet.chars().count();
+            state.cursor.set_char_range(Some(CCursorRange::one(CCursor::new(pos))));
+            state.store(ctx, id);
+            self.mark_changed();
+            return;
         }
         if !self.markdown.is_empty() && !self.markdown.ends_with('\n') {
             self.markdown.push('\n');
@@ -254,9 +275,10 @@ impl ForgeApp {
             Ok(()) => {
                 self.recent.push(path.clone());
                 let _ = self.storage.save_recent(&self.recent);
-                self.file_path = Some(path);
+                self.file_path = Some(path.clone());
                 self.doc_modified = false;
                 self.status_message = "Сохранено".to_string();
+                self.write_pending_tables(&path);
             }
             Err(e) => self.status_message = format!("Ошибка: {e}"),
         }
@@ -278,10 +300,13 @@ impl ForgeApp {
             } else {
                 write_document(&path, &self.output)
             };
-            self.status_message = match result {
+            self.status_message = match &result {
                 Ok(()) => format!("Экспортировано: {}", path.display()),
                 Err(e) => format!("Ошибка экспорта: {e}"),
             };
+            if result.is_ok() {
+                self.write_pending_tables(&path);
+            }
         }
     }
 

@@ -4,6 +4,8 @@
 //! спецвставок Bitrix24 (`[u]`, `[user]`, `[color]`, `[size]`, `[icon]`),
 //! которые не имеют Markdown-аналога и вставляются через GUI-команды.
 
+use std::borrow::Cow;
+
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 
 use crate::diagnostics::{Diagnostic, Diagnostics};
@@ -61,7 +63,76 @@ struct TableBuilder {
     alignments: Vec<TableAlignment>,
 }
 
+/// Символ и длина ведущей серии `` ` ``/`~` в начале строки (>= 3), если такая есть —
+/// используется для отслеживания ОТКРЫВАЮЩЕЙ строки фенса (после серии может идти info-string).
+fn fence_open_char_and_len(rest: &str) -> Option<(char, usize)> {
+    let c = rest.chars().next()?;
+    if c != '`' && c != '~' {
+        return None;
+    }
+    let n = rest.chars().take_while(|&ch| ch == c).count();
+    (n >= 3).then_some((c, n))
+}
+
+/// Если `rest` (без учёта конца строки) — валидный, с точностью до пробелов/табов вокруг,
+/// ЗАКРЫВАЮЩИЙ фенс для уже открытого блока (символ `want_char`, длина не меньше `want_len`),
+/// возвращает фактическую длину серии символов.
+fn fence_close_run_len(rest: &str, want_char: char, want_len: usize) -> Option<usize> {
+    let run = rest.chars().take_while(|&ch| ch == want_char).count();
+    if run < want_len {
+        return None;
+    }
+    rest[run..].chars().all(|ch| ch == ' ' || ch == '\t').then_some(run)
+}
+
+/// CommonMark закрывает `` ``` ``/`~~~` только если у закрывающей строки отступ не более
+/// 3 колонок и после серии символов идут только пробелы; таб (таб-стоп 4) нарушает оба этих
+/// условия и делает блок «незакрытым» — остаток документа проглатывается как код без видимого
+/// закрывающего тега. Такой таб чаще попадает из буфера обмена/редактора с автоотступом, чем
+/// пишется осознанно, поэтому здесь мы «долечиваем» именно закрывающую строку уже открытого
+/// фенса — убираем пробелы/табы вокруг серии символов, если среди них встретился таб.
+fn normalize_tab_indented_fence_closers(input: &str) -> Cow<'_, str> {
+    let mut open_fence: Option<(char, usize)> = None;
+    let mut changed = false;
+    let mut out = String::with_capacity(input.len());
+
+    for line in input.split_inclusive('\n') {
+        let content = line.trim_end_matches(['\r', '\n']);
+        let eol = &line[content.len()..];
+        let ws_len: usize =
+            content.chars().take_while(|c| *c == ' ' || *c == '\t').map(|c| c.len_utf8()).sum();
+        let (ws, rest) = content.split_at(ws_len);
+
+        match open_fence {
+            None => {
+                if let Some((c, n)) = fence_open_char_and_len(rest) {
+                    open_fence = Some((c, n));
+                }
+                out.push_str(line);
+            }
+            Some((open_c, open_n)) => {
+                if let Some(run) = fence_close_run_len(rest, open_c, open_n) {
+                    open_fence = None;
+                    if ws.contains('\t') || rest[run..].contains('\t') {
+                        changed = true;
+                        out.push_str(&rest[..run]);
+                        out.push_str(eol);
+                    } else {
+                        out.push_str(line);
+                    }
+                } else {
+                    out.push_str(line);
+                }
+            }
+        }
+    }
+
+    if changed { Cow::Owned(out) } else { Cow::Borrowed(input) }
+}
+
 pub fn parse_markdown(input: &str) -> ParseResult {
+    let input = normalize_tab_indented_fence_closers(input);
+    let input = input.as_ref();
     let mut opts = Options::empty();
     opts.insert(Options::ENABLE_STRIKETHROUGH);
     opts.insert(Options::ENABLE_TASKLISTS);
@@ -84,18 +155,18 @@ pub fn parse_markdown(input: &str) -> ParseResult {
 
     fn flush_implicit(
         stack: &mut Vec<(InlineFrame, Vec<InlineNode>)>,
-        containers: &mut Vec<Container>,
+        containers: &mut [Container],
         diags: &mut Diagnostics,
     ) {
-        if stack.len() == 1 {
-            if let Some((InlineFrame::Paragraph, nodes)) = stack.pop() {
-                let nodes = postprocess_inlines(nodes, diags);
-                if !nodes.is_empty() {
-                    containers
-                        .last_mut()
-                        .expect("root container")
-                        .push_block(BlockNode::Paragraph(nodes));
-                }
+        if stack.len() == 1
+            && let Some((InlineFrame::Paragraph, nodes)) = stack.pop()
+        {
+            let nodes = postprocess_inlines(nodes, diags);
+            if !nodes.is_empty() {
+                containers
+                    .last_mut()
+                    .expect("root container")
+                    .push_block(BlockNode::Paragraph(nodes));
             }
         }
     }
@@ -195,13 +266,13 @@ pub fn parse_markdown(input: &str) -> ParseResult {
                     }
                 }
                 TagEnd::Emphasis => {
-                    close_inline(&mut inline_stack, &mut diags, |n| InlineNode::Italic(n))
+                    close_inline(&mut inline_stack, &mut diags, InlineNode::Italic)
                 }
                 TagEnd::Strong => {
-                    close_inline(&mut inline_stack, &mut diags, |n| InlineNode::Bold(n))
+                    close_inline(&mut inline_stack, &mut diags, InlineNode::Bold)
                 }
                 TagEnd::Strikethrough => {
-                    close_inline(&mut inline_stack, &mut diags, |n| InlineNode::Strike(n))
+                    close_inline(&mut inline_stack, &mut diags, InlineNode::Strike)
                 }
                 TagEnd::Link => {
                     if let Some((frame, nodes)) = inline_stack.pop() {
@@ -214,13 +285,11 @@ pub fn parse_markdown(input: &str) -> ParseResult {
                     }
                 }
                 TagEnd::Image => {
-                    if let Some((frame, nodes)) = inline_stack.pop() {
-                        if let InlineFrame::Image { url, title } = frame {
-                            let alt = plain_text_of(&nodes);
-                            // размер можно указать в title: ![alt](url "medium")
-                            let size = ImageSize::parse(&title);
-                            append_inline(&mut inline_stack, InlineNode::Image { url, alt, size });
-                        }
+                    if let Some((InlineFrame::Image { url, title }, nodes)) = inline_stack.pop() {
+                        let alt = plain_text_of(&nodes);
+                        // размер можно указать в title: ![alt](url "medium")
+                        let size = ImageSize::parse(&title);
+                        append_inline(&mut inline_stack, InlineNode::Image { url, alt, size });
                     }
                 }
                 TagEnd::CodeBlock => {
@@ -250,10 +319,10 @@ pub fn parse_markdown(input: &str) -> ParseResult {
                 }
                 TagEnd::Item => {
                     flush_implicit(&mut inline_stack, &mut containers, &mut diags);
-                    if let Some(Container::Item(blocks)) = containers.pop() {
-                        if let Some(Container::List { items, .. }) = containers.last_mut() {
-                            items.push(blocks);
-                        }
+                    if let Some(Container::Item(blocks)) = containers.pop()
+                        && let Some(Container::List { items, .. }) = containers.last_mut()
+                    {
+                        items.push(blocks);
                     }
                 }
                 TagEnd::TableCell => {
@@ -262,17 +331,17 @@ pub fn parse_markdown(input: &str) -> ParseResult {
                     }
                 }
                 TagEnd::TableRow => {
-                    if let Some(table) = table.as_mut() {
-                        if !table.current_row.is_empty() {
-                            table.rows.push(std::mem::take(&mut table.current_row));
-                        }
+                    if let Some(table) = table.as_mut()
+                        && !table.current_row.is_empty()
+                    {
+                        table.rows.push(std::mem::take(&mut table.current_row));
                     }
                 }
                 TagEnd::TableHead => {
-                    if let Some(table) = table.as_mut() {
-                        if !table.current_row.is_empty() {
-                            table.rows.push(std::mem::take(&mut table.current_row));
-                        }
+                    if let Some(table) = table.as_mut()
+                        && !table.current_row.is_empty()
+                    {
+                        table.rows.push(std::mem::take(&mut table.current_row));
                     }
                 }
                 TagEnd::Table => {
@@ -350,20 +419,20 @@ pub fn parse_markdown(input: &str) -> ParseResult {
     ParseResult { document: Document { blocks }, diagnostics: diags }
 }
 
-fn push_paragraph(containers: &mut Vec<Container>, nodes: Vec<InlineNode>) {
+fn push_paragraph(containers: &mut [Container], nodes: Vec<InlineNode>) {
     if nodes.is_empty() {
         return;
     }
     // одиночное изображение в абзаце поднимаем до блочного узла
-    if nodes.len() == 1 {
-        if let InlineNode::Image { url, alt, size } = &nodes[0] {
-            containers.last_mut().expect("container").push_block(BlockNode::Image {
-                url: url.clone(),
-                alt: alt.clone(),
-                size: *size,
-            });
-            return;
-        }
+    if nodes.len() == 1
+        && let InlineNode::Image { url, alt, size } = &nodes[0]
+    {
+        containers.last_mut().expect("container").push_block(BlockNode::Image {
+            url: url.clone(),
+            alt: alt.clone(),
+            size: *size,
+        });
+        return;
     }
     containers.last_mut().expect("container").push_block(BlockNode::Paragraph(nodes));
 }
@@ -483,7 +552,7 @@ fn postprocess_inlines(nodes: Vec<InlineNode>, diags: &mut Diagnostics) -> Vec<I
     out
 }
 
-fn append_inline(stack: &mut Vec<(InlineFrame, Vec<InlineNode>)>, node: InlineNode) {
+fn append_inline(stack: &mut [(InlineFrame, Vec<InlineNode>)], node: InlineNode) {
     if let Some((_, top)) = stack.last_mut() {
         top.push(node);
     }
@@ -568,93 +637,91 @@ fn try_parse_bbcode_token(s: &str, diags: &mut Diagnostics) -> Option<(Option<In
     let lower = s.to_ascii_lowercase();
 
     // [u]...[/u]
-    if lower.starts_with("[u]") {
-        if let Some(end) = lower.find("[/u]") {
-            let inner = &s[3..end];
+    if lower.starts_with("[u]")
+        && let Some(end) = lower.find("[/u]")
+    {
+        let inner = &s[3..end];
+        return Some((
+            Some(InlineNode::Underline(vec![InlineNode::Text(inner.to_string())])),
+            end + 4,
+        ));
+    }
+
+    // [user=ID]...[/user]
+    if lower.starts_with("[user=")
+        && let Some(close) = s.find(']')
+    {
+        let id = s[6..close].trim();
+        if let Some(end) = lower.find("[/user]") {
+            let inner = &s[close + 1..end];
+            if id.is_empty() {
+                diags.push(Diagnostic::warn("Пустой идентификатор сотрудника в [user=]."));
+                return Some((Some(InlineNode::Text(inner.to_string())), end + 7));
+            }
             return Some((
-                Some(InlineNode::Underline(vec![InlineNode::Text(inner.to_string())])),
-                end + 4,
+                Some(InlineNode::User {
+                    id: id.to_string(),
+                    text: vec![InlineNode::Text(inner.to_string())],
+                }),
+                end + 7,
             ));
         }
     }
 
-    // [user=ID]...[/user]
-    if lower.starts_with("[user=") {
-        if let Some(close) = s.find(']') {
-            let id = s[6..close].trim();
-            if let Some(end) = lower.find("[/user]") {
-                let inner = &s[close + 1..end];
-                if id.is_empty() {
-                    diags.push(Diagnostic::warn("Пустой идентификатор сотрудника в [user=]."));
-                    return Some((Some(InlineNode::Text(inner.to_string())), end + 7));
-                }
-                return Some((
-                    Some(InlineNode::User {
-                        id: id.to_string(),
-                        text: vec![InlineNode::Text(inner.to_string())],
-                    }),
-                    end + 7,
-                ));
-            }
-        }
-    }
-
     // [color=#HEX]...[/color]
-    if lower.starts_with("[color=") {
-        if let Some(close) = s.find(']') {
-            let value = &s[7..close];
-            if let Some(end) = lower.find("[/color]") {
-                let inner = &s[close + 1..end];
-                let content = vec![InlineNode::Text(inner.to_string())];
-                return match normalize_hex_color(value) {
-                    Some(hex) => {
-                        Some((Some(InlineNode::Color { hex, content }), end + 8))
-                    }
-                    None => {
-                        diags.push(Diagnostic::warn(format!(
-                            "Некорректный HEX-цвет «{value}»: требуется 3 или 6 hex-символов. Цвет отброшен."
-                        )));
-                        Some((Some(InlineNode::Text(inner.to_string())), end + 8))
-                    }
-                };
-            }
+    if lower.starts_with("[color=")
+        && let Some(close) = s.find(']')
+    {
+        let value = &s[7..close];
+        if let Some(end) = lower.find("[/color]") {
+            let inner = &s[close + 1..end];
+            let content = vec![InlineNode::Text(inner.to_string())];
+            return match normalize_hex_color(value) {
+                Some(hex) => Some((Some(InlineNode::Color { hex, content }), end + 8)),
+                None => {
+                    diags.push(Diagnostic::warn(format!(
+                        "Некорректный HEX-цвет «{value}»: требуется 3 или 6 hex-символов. Цвет отброшен."
+                    )));
+                    Some((Some(InlineNode::Text(inner.to_string())), end + 8))
+                }
+            };
         }
     }
 
     // [size=N]...[/size]
-    if lower.starts_with("[size=") {
-        if let Some(close) = s.find(']') {
-            let value = &s[6..close];
-            if let Some(end) = lower.find("[/size]") {
-                let inner = &s[close + 1..end];
-                let content = vec![InlineNode::Text(inner.to_string())];
-                return match value.trim().parse::<u8>().ok().filter(|v| is_valid_size(*v)) {
-                    Some(px) => Some((Some(InlineNode::Size { px, content }), end + 7)),
-                    None => {
-                        diags.push(Diagnostic::warn(format!(
-                            "Некорректное значение size «{value}»: допустим диапазон 8–30. Размер отброшен."
-                        )));
-                        Some((Some(InlineNode::Text(inner.to_string())), end + 7))
-                    }
-                };
-            }
+    if lower.starts_with("[size=")
+        && let Some(close) = s.find(']')
+    {
+        let value = &s[6..close];
+        if let Some(end) = lower.find("[/size]") {
+            let inner = &s[close + 1..end];
+            let content = vec![InlineNode::Text(inner.to_string())];
+            return match value.trim().parse::<u8>().ok().filter(|value| is_valid_size(*value)) {
+                Some(px) => Some((Some(InlineNode::Size { px, content }), end + 7)),
+                None => {
+                    diags.push(Diagnostic::warn(format!(
+                        "Некорректное значение size «{value}»: допустим диапазон 8–30. Размер отброшен."
+                    )));
+                    Some((Some(InlineNode::Text(inner.to_string())), end + 7))
+                }
+            };
         }
     }
 
     // [icon=URL params]
-    if lower.starts_with("[icon=") {
-        if let Some(close) = s.find(']') {
-            let body = &s[6..close];
-            let (url, params) = match body.split_once(char::is_whitespace) {
-                Some((u, p)) => (u.trim().to_string(), p.trim().to_string()),
-                None => (body.trim().to_string(), String::new()),
-            };
-            if url.is_empty() {
-                diags.push(Diagnostic::warn("Пустой URL в [icon=]."));
-                return Some((None, close + 1));
-            }
-            return Some((Some(InlineNode::Icon { url, params }), close + 1));
+    if lower.starts_with("[icon=")
+        && let Some(close) = s.find(']')
+    {
+        let body = &s[6..close];
+        let (url, params) = match body.split_once(char::is_whitespace) {
+            Some((url, params)) => (url.trim().to_string(), params.trim().to_string()),
+            None => (body.trim().to_string(), String::new()),
+        };
+        if url.is_empty() {
+            diags.push(Diagnostic::warn("Пустой URL в [icon=]."));
+            return Some((None, close + 1));
         }
+        return Some((Some(InlineNode::Icon { url, params }), close + 1));
     }
 
     None

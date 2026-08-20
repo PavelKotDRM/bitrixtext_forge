@@ -1,8 +1,9 @@
-//! Модуль ручной обработки кода: псевдоподсветка для preview.
+//! Модуль ручной обработки кода: псевдоподсветка синтаксиса.
 //!
-//! Подсветка выполняется исключительно на стороне приложения (в GUI-preview)
-//! и никогда не переносится в итоговый BBCode: `[code]` в Bitrix24 — только
-//! контейнер кода без документированной подсветки синтаксиса.
+//! Используется как в GUI-preview, так и в BBCode-выводе Manual Code Highlight
+//! профиля (через `[color]`-токены): `[code]` в Bitrix24 — только контейнер без
+//! документированной подсветки, поэтому это лишь визуальное приближение,
+//! не гарантированное самим Bitrix24.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TokenKind {
@@ -44,6 +45,15 @@ fn keywords_for(lang: &str) -> &'static [&'static str] {
             "function", "class", "public", "private", "protected", "return", "if", "else",
             "foreach", "for", "while", "echo", "new", "use", "namespace", "static", "try", "catch",
         ],
+        "csharp" | "c#" | "cs" => &[
+            "using", "namespace", "class", "interface", "struct", "enum", "public", "private",
+            "protected", "internal", "static", "readonly", "const", "void", "var", "new", "this",
+            "base", "return", "if", "else", "for", "foreach", "while", "do", "switch", "case",
+            "break", "continue", "try", "catch", "finally", "throw", "async", "await", "get",
+            "set", "override", "virtual", "abstract", "sealed", "partial", "string", "int",
+            "bool", "double", "float", "decimal", "long", "object", "null", "true", "false",
+            "in", "out", "ref", "params", "is", "as", "typeof", "default", "yield", "record",
+        ],
         _ => &[
             "if", "else", "for", "while", "return", "function", "class", "def", "fn", "let",
             "const", "var", "true", "false", "null",
@@ -68,7 +78,9 @@ pub fn highlight_line(lang: &str, line: &str) -> Vec<Token> {
         if let Some(pos) = line.find(cp) {
             // грубая проверка: не внутри строки
             let before = &line[..pos];
-            if before.matches('"').count() % 2 == 0 && before.matches('\'').count() % 2 == 0 {
+            if before.matches('"').count().is_multiple_of(2)
+                && before.matches('\'').count().is_multiple_of(2)
+            {
                 let mut head = highlight_segment(lang, before);
                 tokens.append(&mut head);
                 tokens.push(Token { text: line[pos..].to_string(), kind: TokenKind::Comment });
@@ -213,6 +225,27 @@ mod tests {
     fn strings_highlighted() {
         let toks = kinds("python", "print(\"hello\")");
         assert!(toks.iter().any(|(t, k)| t == "\"hello\"" && *k == TokenKind::String));
+    }
+
+    #[test]
+    fn csharp_keywords_highlighted() {
+        let toks = kinds("csharp", "public class Foo { private readonly int x = 1; }");
+        assert!(toks.iter().any(|(t, k)| t == "public" && *k == TokenKind::Keyword));
+        assert!(toks.iter().any(|(t, k)| t == "class" && *k == TokenKind::Keyword));
+        assert!(toks.iter().any(|(t, k)| t == "private" && *k == TokenKind::Keyword));
+        assert!(toks.iter().any(|(t, k)| t == "readonly" && *k == TokenKind::Keyword));
+        assert!(toks.iter().any(|(t, k)| t == "int" && *k == TokenKind::Keyword));
+    }
+
+    #[test]
+    fn csharp_language_aliases_share_keywords() {
+        for lang in ["csharp", "c#", "cs", "CSharp", "C#"] {
+            let toks = kinds(lang, "namespace App { }");
+            assert!(
+                toks.iter().any(|(t, k)| t == "namespace" && *k == TokenKind::Keyword),
+                "namespace should be a keyword for lang={lang}"
+            );
+        }
     }
 
     #[test]

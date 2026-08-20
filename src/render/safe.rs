@@ -5,21 +5,23 @@
 //! Медиа и служебные элементы заменяются безопасным текстом с предупреждением.
 
 use crate::diagnostics::{Diagnostic, Diagnostics};
-use crate::model::{BlockNode, Document, InlineNode};
+use crate::model::{BlockNode, Document, InlineNode, TableAlignment};
 use crate::parser::plain_text_of;
 use crate::profiles::RenderOptions;
+use crate::tables::{ExtractedTable, table_file_name};
 
 use super::RenderResult;
 
 pub fn render(doc: &Document, opts: &RenderOptions) -> RenderResult {
-    let mut r = SafeRenderer { opts, diags: Diagnostics::default() };
+    let mut r = SafeRenderer { opts, diags: Diagnostics::default(), tables: Vec::new() };
     let output = r.render_blocks(&doc.blocks, 0);
-    RenderResult { output, diagnostics: r.diags }
+    RenderResult { output, diagnostics: r.diags, tables: r.tables }
 }
 
 struct SafeRenderer<'a> {
     opts: &'a RenderOptions,
     diags: Diagnostics,
+    tables: Vec<ExtractedTable>,
 }
 
 impl SafeRenderer<'_> {
@@ -53,10 +55,17 @@ impl SafeRenderer<'_> {
                     .join(self.br())
             }
             BlockNode::CodeBlock { code, .. } => {
-                self.diags.push(Diagnostic::info(
-                    "Код оформлен отступом в 4 пробела: тег [code] не входит в поддерживаемый набор.",
-                ));
-                code.lines().map(|line| format!("    {line}")).collect::<Vec<_>>().join(self.br())
+                if self.opts.safe_allow_code {
+                    self.diags.push(Diagnostic::info(
+                        "Блок кода обёрнут в [code]: Bitrix24 не подсвечивает синтаксис внутри тега.",
+                    ));
+                    format!("[code]{sep}{code}{sep}[/code]", sep = self.br())
+                } else {
+                    self.diags.push(Diagnostic::info(
+                        "Код оформлен отступом в 4 пробела: тег [code] отключён в Core Safe Profile (см. настройки).",
+                    ));
+                    code.lines().map(|line| format!("    {line}")).collect::<Vec<_>>().join(self.br())
+                }
             }
             BlockNode::List { ordered, start, items } => {
                 let indent = "    ".repeat(depth);
@@ -78,7 +87,7 @@ impl SafeRenderer<'_> {
                 }
                 lines.join(self.br())
             }
-            BlockNode::Table { rows, .. } => self.render_table(rows),
+            BlockNode::Table { rows, alignments } => self.render_table(rows, alignments),
             BlockNode::Image { url, alt, .. } => {
                 self.warn_loss("Изображение заменено текстовой ссылкой (Core Safe Profile).");
                 if alt.is_empty() {
@@ -97,16 +106,17 @@ impl SafeRenderer<'_> {
         }
     }
 
-    fn render_table(&mut self, rows: &[Vec<Vec<InlineNode>>]) -> String {
-        self.warn_loss("Таблица Markdown выведена текстовыми строками: BBCode-тег таблицы не документирован Bitrix24.");
-        rows
+    fn render_table(&mut self, rows: &[Vec<Vec<InlineNode>>], alignments: &[TableAlignment]) -> String {
+        let name = table_file_name(self.tables.len());
+        self.warn_loss(&format!(
+            "Таблица Markdown сохранена в отдельный файл Excel «{name}»: BBCode-тег таблицы не документирован Bitrix24."
+        ));
+        let rendered_rows = rows
             .iter()
-            .map(|row| {
-                let cells = row.iter().map(|cell| plain_text_of(cell)).collect::<Vec<_>>();
-                format!("| {} |", cells.join(" | "))
-            })
-            .collect::<Vec<_>>()
-            .join(self.br())
+            .map(|row| row.iter().map(|cell| plain_text_of(cell)).collect())
+            .collect();
+        self.tables.push(ExtractedTable { rows: rendered_rows, alignments: alignments.to_vec() });
+        format!("Таблица: {name}")
     }
 
     fn render_inlines(&mut self, inlines: &[InlineNode]) -> String {
@@ -218,8 +228,7 @@ mod tests {
 
     #[test]
     fn inline_code_is_not_rendered_as_a_code_block() {
-        let mut opts = RenderOptions::default();
-        opts.safe_allow_code = true;
+        let opts = RenderOptions { safe_allow_code: true, ..Default::default() };
         assert_eq!(render_md_res("run `ls` now", &opts).output, "run ls now");
     }
 
@@ -231,10 +240,10 @@ mod tests {
     }
 
     #[test]
-    fn code_is_never_rendered_as_bbcode() {
+    fn code_allowed_renders_as_code_tag_when_enabled() {
         let opts = RenderOptions { safe_allow_code: true, ..Default::default() };
         let res = render_md_res("```\nlet x = 1;\n```", &opts);
-        assert_eq!(res.output, "    let x = 1;");
+        assert_eq!(res.output, "[code]\nlet x = 1;\n[/code]");
     }
 
     #[test]

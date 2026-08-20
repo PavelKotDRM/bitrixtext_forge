@@ -3,19 +3,21 @@
 use crate::diagnostics::Diagnostics;
 use crate::model::{BlockNode, Document, InlineNode};
 use crate::profiles::RenderOptions;
+use crate::tables::{ExtractedTable, table_file_name};
 
 use super::RenderResult;
 
 pub fn render(doc: &Document, opts: &RenderOptions) -> RenderResult {
-    let mut r = PlainRenderer { opts, diags: Diagnostics::default() };
+    let mut r = PlainRenderer { opts, diags: Diagnostics::default(), tables: Vec::new() };
     let output = r.render_blocks(&doc.blocks, 0);
-    RenderResult { output, diagnostics: r.diags }
+    RenderResult { output, diagnostics: r.diags, tables: r.tables }
 }
 
 struct PlainRenderer<'a> {
     opts: &'a RenderOptions,
     #[allow(dead_code)]
     diags: Diagnostics,
+    tables: Vec<ExtractedTable>,
 }
 
 impl PlainRenderer<'_> {
@@ -56,14 +58,15 @@ impl PlainRenderer<'_> {
                 }
                 lines.join("\n")
             }
-            BlockNode::Table { rows, .. } => rows
-                .iter()
-                .map(|row| {
-                    let cells = row.iter().map(|cell| self.render_inlines(cell)).collect::<Vec<_>>();
-                    format!("| {} |", cells.join(" | "))
-                })
-                .collect::<Vec<_>>()
-                .join("\n"),
+            BlockNode::Table { rows, alignments } => {
+                let name = table_file_name(self.tables.len());
+                let rendered_rows = rows
+                    .iter()
+                    .map(|row| row.iter().map(|cell| self.render_inlines(cell)).collect())
+                    .collect();
+                self.tables.push(ExtractedTable { rows: rendered_rows, alignments: alignments.clone() });
+                format!("Таблица: {name}")
+            }
             BlockNode::Image { url, alt, .. } => {
                 if alt.is_empty() {
                     url.clone()

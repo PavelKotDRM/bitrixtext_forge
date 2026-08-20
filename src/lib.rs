@@ -9,6 +9,7 @@ pub mod profiles;
 pub mod render;
 pub mod settings;
 pub mod storage;
+pub mod tables;
 pub mod templates;
 
 pub fn build_info() -> String {
