@@ -437,7 +437,6 @@ dependencies = [
  "directories",
  "eframe",
  "egui",
- "encoding_rs",
  "fontdb",
  "pulldown-cmark",
  "rfd",
@@ -996,15 +995,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dce03cf1604f74515830012c29991beb0b58f69e4e43f5afe22fa7afed65ccd5"
 dependencies = [
  "bytemuck",
-]
-
-[[package]]
-name = "encoding_rs"
-version = "0.8.35"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "75030f3c4f45dafd7586dd6780965a8c7e8e285a5ecb86713e63a79c5b2766f3"
-dependencies = [
- "cfg-if",
 ]
 
 [[package]]
