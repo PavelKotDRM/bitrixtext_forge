@@ -228,9 +228,18 @@ pub fn parse_markdown(input: &str) -> ParseResult {
                 Tag::Heading { level, .. } => {
                     inline_stack.push((InlineFrame::Heading(level as u8), Vec::new()));
                 }
-                Tag::Emphasis => inline_stack.push((InlineFrame::Italic, Vec::new())),
-                Tag::Strong => inline_stack.push((InlineFrame::Bold, Vec::new())),
-                Tag::Strikethrough => inline_stack.push((InlineFrame::Strike, Vec::new())),
+                Tag::Emphasis => {
+                    ensure_implicit_paragraph(&mut inline_stack);
+                    inline_stack.push((InlineFrame::Italic, Vec::new()));
+                }
+                Tag::Strong => {
+                    ensure_implicit_paragraph(&mut inline_stack);
+                    inline_stack.push((InlineFrame::Bold, Vec::new()));
+                }
+                Tag::Strikethrough => {
+                    ensure_implicit_paragraph(&mut inline_stack);
+                    inline_stack.push((InlineFrame::Strike, Vec::new()));
+                }
                 Tag::Link { dest_url, .. } => {
                     ensure_implicit_paragraph(&mut inline_stack);
                     inline_stack.push((InlineFrame::Link(dest_url.to_string()), Vec::new()));

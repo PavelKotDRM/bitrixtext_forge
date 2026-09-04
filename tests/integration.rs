@@ -229,6 +229,14 @@ fn task_lists_and_nested_markdown_keep_structure() {
 }
 
 #[test]
+fn list_item_keeps_multiple_adjacent_formatted_runs() {
+    let md = "* **Список** **Жирный**\n* Не жирный";
+    let out = convert(md, ProfileKind::Full);
+
+    assert_eq!(out, "• [b]Список[/b] [b]Жирный[/b]\n• Не жирный");
+}
+
+#[test]
 fn indented_nested_lists_keep_structure() {
     let md = "    + Create a list by starting a line with `+`, `-`, or `*`\n    + Sub-lists are made by indenting 2 spaces:\n     - Marker character change forces new list start:\n        * Ac tristique libero volutpat at\n        + Facilisis in pretium nisl aliquet\n        - Nulla volutpat aliquam velit\n    + Very easy!";
     let plain_expected = "• Create a list by starting a line with +, -, or *\n• Sub-lists are made by indenting 2 spaces:\n    • Marker character change forces new list start:\n        • Ac tristique libero volutpat at\n        • Facilisis in pretium nisl aliquet\n        • Nulla volutpat aliquam velit\n• Very easy!";
