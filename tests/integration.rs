@@ -224,7 +224,7 @@ fn task_lists_and_nested_markdown_keep_structure() {
 
     assert_eq!(
         out,
-        "• [ ] [b]Подготовить[/b] [url=https://example.com/doc]документ[/url]\n    • [x] [b]проверить[/b]"
+        "• ☐ [b]Подготовить[/b] [url=https://example.com/doc]документ[/url]\n    • ☑ [b]проверить[/b]"
     );
 }
 

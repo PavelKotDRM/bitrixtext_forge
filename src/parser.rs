@@ -458,7 +458,7 @@ pub fn parse_markdown(input: &str) -> ParseResult {
             }
             Event::TaskListMarker(checked) => {
                 ensure_implicit_paragraph(&mut inline_stack);
-                let mark = if checked { "[x] " } else { "[ ] " };
+                let mark = if checked { "☑ " } else { "☐ " };
                 append_inline(&mut inline_stack, InlineNode::Text(mark.to_string()));
             }
             _ => {}
@@ -880,7 +880,7 @@ mod tests {
         let doc = parse("- [ ] В работе\n- [x] Готово");
         match &doc.blocks[0] {
             BlockNode::List { items, .. } => {
-                for (item, marker) in items.iter().zip(["[ ] ", "[x] "]) {
+                for (item, marker) in items.iter().zip(["☐ ", "☑ "]) {
                     match &item[0] {
                         BlockNode::Paragraph(nodes) => {
                             assert!(matches!(nodes.first(), Some(InlineNode::Text(text)) if text.starts_with(marker)));
