@@ -44,21 +44,34 @@ cargo test
 cargo build --release
 ```
 
-## Docker Build
+## Build
 
-Docker Desktop with Buildx enabled and access to Linux containers is required. The script builds optimized native Linux binaries for `x86_64` and `aarch64`, exporting them to the `dist` directory:
+Docker Desktop with Buildx enabled and access to Linux containers is required
+for the Linux targets. The script builds optimized native binaries for Linux
+`x86_64`, Linux `aarch64`, and Windows `x86_64` by default, exporting them to
+the `dist` directory:
 
 ```powershell
 .\scripts\build-docker.ps1 -Clean
 ```
 
-To build a single architecture or change the artifacts directory:
+The output names use canonical architecture names:
+
+- `dist\linux-x86_64\bitrixtext_forge-linux-x86_64`;
+- `dist\linux-aarch64\bitrixtext_forge-linux-aarch64`;
+- `dist\windows-x86_64\bitrixtext_forge-windows-x86_64.exe`.
+
+To build a single Linux architecture or change the artifacts directory:
 
 ```powershell
-.\scripts\build-docker.ps1 -Platform linux/amd64 -OutputDirectory artifacts -Clean
+.\scripts\build-docker.ps1 -Platform linux/x86_64 -OutputDirectory artifacts -Clean
 ```
 
-The results are placed in `dist\linux-amd64` and `dist\linux-arm64`; the executable name contains the target architecture. Windows is built natively with `cargo build --release`. macOS requires a native Mac: Docker on Linux/Windows does not include the redistributable Apple SDK required to build the application correctly.
+The old Docker aliases `linux/amd64` and `linux/arm64` remain accepted.
+Use `-SkipWindows` for a Linux-only build. The Windows artifact is built
+natively with `cargo build --release`; run the script on a Windows host.
+macOS requires a native Mac: Docker on Linux/Windows does not include the
+redistributable Apple SDK required to build the application correctly.
 
 ## Input and Output
 

@@ -48,21 +48,35 @@ cargo test
 cargo build --release
 ```
 
-## Сборка через Docker
+## Сборка
 
-Требуются Docker Desktop с включённым Buildx и доступом к контейнерам Linux. Скрипт собирает оптимизированные нативные Linux-бинарники для `x86_64` и `aarch64`, экспортируя их в каталог `dist`:
+Для Linux-целей требуются Docker Desktop с включённым Buildx и доступом к
+контейнерам Linux. Скрипт по умолчанию собирает оптимизированные нативные
+бинарники для Linux `x86_64`, Linux `aarch64` и Windows `x86_64`, экспортируя
+их в каталог `dist`:
 
 ```powershell
 .\scripts\build-docker.ps1 -Clean
 ```
 
-Чтобы собрать одну архитектуру или изменить каталог артефактов:
+Имена каталогов и файлов используют канонические названия архитектур:
+
+- `dist\linux-x86_64\bitrixtext_forge-linux-x86_64`;
+- `dist\linux-aarch64\bitrixtext_forge-linux-aarch64`;
+- `dist\windows-x86_64\bitrixtext_forge-windows-x86_64.exe`.
+
+Чтобы собрать только одну Linux-архитектуру или изменить каталог артефактов:
 
 ```powershell
-.\scripts\build-docker.ps1 -Platform linux/amd64 -OutputDirectory artifacts -Clean
+.\scripts\build-docker.ps1 -Platform linux/x86_64 -OutputDirectory artifacts -Clean
 ```
 
-Результаты находятся в `dist\linux-amd64` и `dist\linux-arm64`; имя исполняемого файла содержит целевую архитектуру. Windows собирается нативно командой `cargo build --release`. Для macOS требуется нативный Mac: Docker на Linux/Windows не включает распространяемый SDK Apple, необходимый для корректной сборки приложения.
+Прежние Docker-алиасы `linux/amd64` и `linux/arm64` также принимаются.
+Для сборки только Linux используйте `-SkipWindows`. Windows-артефакт
+собирается нативно командой `cargo build --release`, поэтому скрипт для него
+нужно запускать на Windows. Для macOS требуется нативный Mac: Docker на
+Linux/Windows не включает распространяемый SDK Apple, необходимый для
+корректной сборки приложения.
 
 ## Вход и результат
 
