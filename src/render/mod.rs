@@ -1,6 +1,7 @@
 //! Рендереры профилей вывода.
 
 pub mod full;
+pub mod html;
 pub mod plain;
 pub mod safe;
 

@@ -7,6 +7,7 @@ pub mod model;
 pub mod parser;
 pub mod profiles;
 pub mod render;
+pub mod resources;
 pub mod settings;
 pub mod storage;
 pub mod tables;

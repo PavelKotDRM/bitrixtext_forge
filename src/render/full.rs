@@ -147,7 +147,8 @@ impl FullRenderer<'_> {
     fn render_table(&mut self, rows: &[Vec<Vec<InlineNode>>], alignments: &[TableAlignment]) -> String {
         let name = table_file_name(self.tables.len());
         self.diags.push(Diagnostic::info(format!(
-            "Таблица Markdown сохранена в отдельный файл Excel «{name}»: теги [table], [tr] и [td] не поддерживаются Bitrix24."
+            "Таблица Markdown подготовлена для отдельного файла Excel «{name}»: \
+             для выбора каталога используйте кнопку «📦 Ресурсы»."
         )));
         let rendered_rows = rows
             .iter()

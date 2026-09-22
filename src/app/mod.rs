@@ -3,7 +3,7 @@
 pub mod dialogs;
 pub mod preview;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use egui::text::{CCursor, CCursorRange};
@@ -12,9 +12,10 @@ use crate::diagnostics::{Diagnostics, Severity};
 use crate::parser::parse_markdown;
 use crate::profiles::ProfileKind;
 use crate::render;
+use crate::resources::{ExtractedImage, collect_images, export_resources as write_resources};
 use crate::settings::{AppSettings, Theme};
 use crate::storage::{RecentFiles, SessionState, Storage, export_json, read_document, write_document};
-use crate::tables::{ExtractedTable, write_tables_xlsx};
+use crate::tables::ExtractedTable;
 use crate::templates::{Template, builtin_templates};
 
 use dialogs::{DialogKind, DialogResult, InsertDialog, TemplateEvent, TemplatesUi};
@@ -98,6 +99,7 @@ pub struct ForgeApp {
     output: String,
     diagnostics: Diagnostics,
     pending_tables: Vec<ExtractedTable>,
+    pending_images: Vec<ExtractedImage>,
 
     profile: ProfileKind,
     file_path: Option<PathBuf>,
@@ -141,6 +143,7 @@ impl ForgeApp {
             output: String::new(),
             diagnostics: Diagnostics::default(),
             pending_tables: Vec::new(),
+            pending_images: Vec::new(),
             file_path: session.file_path,
             doc_modified: false,
             needs_convert: true,
@@ -169,32 +172,17 @@ impl ForgeApp {
 
     fn convert(&mut self) {
         let parsed = parse_markdown(&self.markdown);
+        let images = collect_images(&parsed.document);
         let opts = self.settings.render_options();
         let res = render::render(&parsed.document, self.profile, &opts);
         self.output = res.output;
         self.pending_tables = res.tables;
+        self.pending_images = images;
         let mut diags = parsed.diagnostics;
         diags.extend(res.diagnostics);
         self.diagnostics = diags;
         self.needs_convert = false;
     }
-
-    /// Сохраняет таблицы, извлечённые при последней конвертации, в отдельные `.xlsx`-файлы
-    /// рядом с указанным файлом (имена вида `table_1.xlsx`, `table_2.xlsx`, ...).
-    fn write_pending_tables(&mut self, near: &std::path::Path) {
-        if self.pending_tables.is_empty() {
-            return;
-        }
-        let Some(dir) = near.parent() else { return };
-        match write_tables_xlsx(&self.pending_tables, dir) {
-            Ok(paths) => {
-                self.status_message =
-                    format!("{} (таблиц сохранено: {})", self.status_message, paths.len());
-            }
-            Err(e) => self.status_message = format!("{}; ошибка сохранения таблиц: {e}", self.status_message),
-        }
-    }
-
 
     fn insert_snippet(&mut self, ctx: &egui::Context, snippet: &str) {
         let id = egui::Id::new(EDITOR_ID);
@@ -278,7 +266,6 @@ impl ForgeApp {
                 self.file_path = Some(path.clone());
                 self.doc_modified = false;
                 self.status_message = "Сохранено".to_string();
-                self.write_pending_tables(&path);
             }
             Err(e) => self.status_message = format!("Ошибка: {e}"),
         }
@@ -304,9 +291,45 @@ impl ForgeApp {
                 Ok(()) => format!("Экспортировано: {}", path.display()),
                 Err(e) => format!("Ошибка экспорта: {e}"),
             };
-            if result.is_ok() {
-                self.write_pending_tables(&path);
+        }
+    }
+
+    fn export_resources(&mut self) {
+        if self.needs_convert {
+            self.convert();
+        }
+        if self.pending_tables.is_empty() && self.pending_images.is_empty() {
+            self.status_message = "В документе нет изображений или таблиц для экспорта".to_string();
+            return;
+        }
+
+        let dialog = rfd::FileDialog::new()
+            .set_title("Куда экспортировать изображения и таблицы")
+            .pick_folder();
+        let Some(destination) = dialog else {
+            return;
+        };
+        let source_dir = self.file_path.as_deref().and_then(Path::parent);
+        match write_resources(
+            &self.pending_tables,
+            &self.pending_images,
+            &destination,
+            source_dir,
+        ) {
+            Ok(exported) => {
+                self.status_message = format!(
+                    "Ресурсы экспортированы в {} (таблиц: {}, изображений: {}, реестр: {})",
+                    destination.display(),
+                    exported.table_paths.len(),
+                    exported.image_paths.len(),
+                    exported
+                        .manifest_path
+                        .file_name()
+                        .map(|name| name.to_string_lossy())
+                        .unwrap_or_else(|| exported.manifest_path.to_string_lossy()),
+                );
             }
+            Err(e) => self.status_message = format!("Ошибка экспорта ресурсов: {e}"),
         }
     }
 
@@ -316,6 +339,21 @@ impl ForgeApp {
         }
         match arboard::Clipboard::new().and_then(|mut c| c.set_text(self.output.clone())) {
             Ok(()) => self.status_message = "Результат скопирован в буфер обмена".to_string(),
+            Err(e) => self.status_message = format!("Ошибка буфера обмена: {e}"),
+        }
+    }
+
+    fn copy_formatted_result(&mut self) {
+        if self.needs_convert {
+            self.convert();
+        }
+        let html = render::html::bbcode_to_html(&self.output);
+        let fallback = self.output.clone();
+        match arboard::Clipboard::new().and_then(|mut c| c.set_html(html, Some(fallback))) {
+            Ok(()) => {
+                self.status_message =
+                    "Форматированный результат скопирован в буфер обмена".to_string();
+            }
             Err(e) => self.status_message = format!("Ошибка буфера обмена: {e}"),
         }
     }
@@ -392,8 +430,22 @@ impl ForgeApp {
                 if ui.button("📤 Экспорт").clicked() {
                     self.export_result();
                 }
+                if ui
+                    .button("📦 Ресурсы")
+                    .on_hover_text("Выбрать каталог для экспорта изображений и таблиц")
+                    .clicked()
+                {
+                    self.export_resources();
+                }
                 if ui.button("📋 Копировать результат").clicked() {
                     self.copy_result();
+                }
+                if ui
+                    .button("✨ Копировать форматированный")
+                    .on_hover_text("Скопировать HTML с BBCode как текстовым fallback")
+                    .clicked()
+                {
+                    self.copy_formatted_result();
                 }
 
                 ui.separator();
@@ -478,6 +530,11 @@ impl ForgeApp {
                 ui.horizontal(|ui| {
                     ui.strong("Markdown");
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let tables = self.pending_tables.len();
+                        let images = self.pending_images.len();
+                        if tables > 0 || images > 0 {
+                            ui.weak(format!("таблиц: {tables}, изображений: {images}"));
+                        }
                         if let Some(p) = &self.file_path {
                             ui.weak(p.file_name().map(|n| n.to_string_lossy().to_string())
                                 .unwrap_or_default());

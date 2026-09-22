@@ -16,7 +16,7 @@ For a step-by-step user guide in Russian, see [the tutorial](docs/tutorial/READM
 - Support for headings, lists (including task lists and nested lists), blockquotes, links, bold, italic, strikethrough, code, images, and horizontal rules.
 - Markdown table support with cell formatting preserved and a text fallback: Bitrix24 has no documented BBCode table tag.
 - Special inserts: `[u]`, `[user=ID]`, `[color=#HEX]`, `[size=N]`, and `[icon=URL ...]` with parameter validation.
-- Open and save Markdown, export the result to text or JSON, and copy it to the system clipboard.
+- Open and save Markdown, export the result to text or JSON, export images and tables to a selected folder, and copy plain or formatted results to the system clipboard.
 - Built-in and custom templates, autosave, session recovery, and a recent files list.
 - All settings, drafts, and templates are stored locally.
 
@@ -62,15 +62,17 @@ The results are placed in `dist\linux-amd64` and `dist\linux-arm64`; the executa
 
 ## Input and Output
 
-The application opens `.md`, `.markdown`, and `.txt` files. The source is saved as UTF-8 Markdown; the result can be exported to `.txt`, `.bbcode.txt`, or JSON with `markdown`, `bbcode`, and `profile` fields.
+The application opens `.md`, `.markdown`, and `.txt` files. The source is saved as UTF-8 Markdown; the result can be exported to `.txt`, `.bbcode.txt`, or JSON with `markdown`, `bbcode`, and `profile` fields. The separate **📦 Ресурсы** action asks for a destination folder for extracted tables and images.
 
 Full Message generates an extended subset of Bitrix24 BBCode, including `[b]`, `[i]`, `[u]`, `[s]`, `[url]`, `[color]`, `[size]`, `[icon]`, and `[user]`. Core Safe keeps only basic formatting. Plain Text does not generate BBCode.
 
 Full Message wraps fenced code blocks in `[code]`; Core Safe uses a readable
 four-space fallback unless `[code]` is explicitly enabled, and Manual Code
-Highlight renders code without `[code]`. Images are represented as readable
-links rather than `[img]`. HTML is not executed, and unsupported constructs or
-constructs that may lose formatting are reported in the diagnostics.
+Highlight renders code without `[code]`. Images are represented as readable links rather than `[img]`. The resource
+export copies local image files, saves external URLs as `.url` shortcuts, and
+writes a `resources.txt` manifest without downloading from the network. HTML is
+not executed, and unsupported constructs or constructs that may lose formatting
+are reported in the diagnostics.
 
 ## Technologies
 
