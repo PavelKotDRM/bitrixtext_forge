@@ -6,6 +6,8 @@ A local desktop application for preparing messages for Bitrix24. Edit source tex
 
 The application does not connect to Bitrix24, send messages, or store credentials.
 
+For a step-by-step user guide in Russian, see [the tutorial](docs/tutorial/README.md).
+
 ## Features
 
 - Markdown editor with automatic or manual conversion.
@@ -64,7 +66,11 @@ The application opens `.md`, `.markdown`, and `.txt` files. The source is saved 
 
 Full Message generates an extended subset of Bitrix24 BBCode, including `[b]`, `[i]`, `[u]`, `[s]`, `[url]`, `[color]`, `[size]`, `[icon]`, and `[user]`. Core Safe keeps only basic formatting. Plain Text does not generate BBCode.
 
-Code blocks and images use a readable text representation: the application intentionally does not generate `[code]` or `[img]`. HTML is not executed, and unsupported constructs or constructs that may lose formatting are reported in the diagnostics.
+Full Message wraps fenced code blocks in `[code]`; Core Safe uses a readable
+four-space fallback unless `[code]` is explicitly enabled, and Manual Code
+Highlight renders code without `[code]`. Images are represented as readable
+links rather than `[img]`. HTML is not executed, and unsupported constructs or
+constructs that may lose formatting are reported in the diagnostics.
 
 ## Technologies
 
