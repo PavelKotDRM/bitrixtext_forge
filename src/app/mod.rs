@@ -69,6 +69,11 @@ enum Tab {
     Inserts,
 }
 
+enum PendingDocumentAction {
+    New,
+    Open(PathBuf),
+}
+
 /// Позиция прокрутки панели в долях от её полного хода.
 #[derive(Default, Clone, Copy)]
 struct PaneScroll {
@@ -93,7 +98,9 @@ fn pane_scroll<R>(out: &egui::scroll_area::ScrollAreaOutput<R>) -> PaneScroll {
 
 pub struct ForgeApp {
     settings: AppSettings,
+    settings_storage: Storage,
     storage: Storage,
+    storage_dir_draft: String,
 
     markdown: String,
     output: String,
@@ -115,6 +122,7 @@ pub struct ForgeApp {
     show_templates: bool,
     templates_ui: TemplatesUi,
     insert_dialog: Option<InsertDialog>,
+    pending_document_action: Option<PendingDocumentAction>,
     scroll_sync: ScrollSync,
 
     last_autosave: Instant,
@@ -124,10 +132,21 @@ pub struct ForgeApp {
 
 impl ForgeApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        let bootstrap = Storage::new("");
-        let mut settings = bootstrap.load_settings().unwrap_or_default();
-        settings.output_font_size = settings.editor_font_size;
+        let settings_storage = Storage::new("");
+        let mut settings = settings_storage.load_settings().unwrap_or_default();
         let storage = Storage::new(&settings.storage_dir);
+        if storage.base_dir() != settings_storage.base_dir() {
+            match storage.load_settings_if_exists() {
+                Ok(Some(mut stored_settings)) => {
+                    stored_settings.storage_dir = settings.storage_dir.clone();
+                    settings = stored_settings;
+                }
+                Ok(None) => {}
+                Err(error) => eprintln!("Не удалось загрузить настройки из каталога хранения: {error:#}"),
+            }
+        }
+        settings.output_font_size = settings.editor_font_size;
+        let storage_dir_draft = settings.storage_dir.clone();
 
         let recent = storage.load_recent().unwrap_or_default();
         let user_templates = storage.load_user_templates().unwrap_or_default();
@@ -155,12 +174,15 @@ impl ForgeApp {
             show_templates: false,
             templates_ui: TemplatesUi::default(),
             insert_dialog: None,
+            pending_document_action: None,
             scroll_sync: ScrollSync::default(),
             last_autosave: Instant::now(),
             autosave_status: "—".to_string(),
             status_message: String::new(),
             settings,
+            settings_storage,
             storage,
+            storage_dir_draft,
         };
         app.convert();
         app
@@ -182,6 +204,72 @@ impl ForgeApp {
         diags.extend(res.diagnostics);
         self.diagnostics = diags;
         self.needs_convert = false;
+    }
+
+    fn persist_settings(&self) -> anyhow::Result<()> {
+        self.settings_storage.save_settings(&self.settings)?;
+        if self.storage.base_dir() != self.settings_storage.base_dir() {
+            self.storage.save_settings(&self.settings)?;
+        }
+        Ok(())
+    }
+
+    fn switch_storage(&mut self) -> anyhow::Result<()> {
+        let next_storage = Storage::new(&self.settings.storage_dir);
+        if next_storage.base_dir() == self.storage.base_dir() {
+            return Ok(());
+        }
+
+        let mut recent = next_storage.load_recent()?;
+        for path in self.recent.items.iter().rev() {
+            recent.push(path.clone());
+        }
+
+        let mut user_templates = self.user_templates.clone();
+        for template in next_storage.load_user_templates()? {
+            if !user_templates.iter().any(|current| {
+                current.name == template.name && current.category == template.category
+            }) {
+                user_templates.push(template);
+            }
+        }
+
+        let session = SessionState {
+            markdown: self.markdown.clone(),
+            profile: Some(self.profile),
+            file_path: self.file_path.clone(),
+        };
+        next_storage.save_autosave(&self.markdown)?;
+        next_storage.save_session(&session)?;
+        next_storage.save_recent(&recent)?;
+        next_storage.save_user_templates(&user_templates)?;
+
+        self.storage = next_storage;
+        self.recent = recent;
+        self.user_templates = user_templates;
+        Ok(())
+    }
+
+    fn save_recovery_state(&mut self) {
+        let session = SessionState {
+            markdown: self.markdown.clone(),
+            profile: Some(self.profile),
+            file_path: self.file_path.clone(),
+        };
+        let autosave_result = self.storage.save_autosave(&self.markdown);
+        let session_result = self.storage.save_session(&session);
+        let mut errors = Vec::new();
+        if let Err(error) = autosave_result {
+            errors.push(format!("autosave.md: {error:#}"));
+        }
+        if let Err(error) = session_result {
+            errors.push(format!("session.json: {error:#}"));
+        }
+        self.autosave_status = if errors.is_empty() {
+            "автосохранено".to_string()
+        } else {
+            format!("ошибка автосохранения: {}", errors.join("; "))
+        };
     }
 
     fn insert_snippet(&mut self, ctx: &egui::Context, snippet: &str) {
@@ -212,13 +300,29 @@ impl ForgeApp {
         self.needs_convert = true;
     }
 
+    fn request_new_document(&mut self) {
+        if self.doc_modified {
+            self.pending_document_action = Some(PendingDocumentAction::New);
+        } else {
+            self.new_document();
+        }
+    }
+
+    fn request_open_path(&mut self, path: PathBuf) {
+        if self.doc_modified {
+            self.pending_document_action = Some(PendingDocumentAction::Open(path));
+        } else {
+            self.open_path(path);
+        }
+    }
+
     fn new_document(&mut self) {
         self.markdown.clear();
         self.file_path = None;
         self.doc_modified = false;
-        self.mark_changed();
-        self.doc_modified = false;
+        self.needs_convert = true;
         self.status_message = "Создан новый документ".to_string();
+        self.save_recovery_state();
     }
 
     fn open_document(&mut self) {
@@ -226,7 +330,7 @@ impl ForgeApp {
             .add_filter("Markdown / текст", &["md", "txt", "markdown"])
             .add_filter("Все файлы", &["*"]);
         if let Some(path) = dialog.pick_file() {
-            self.open_path(path);
+            self.request_open_path(path);
         }
     }
 
@@ -240,6 +344,7 @@ impl ForgeApp {
                 self.doc_modified = false;
                 self.needs_convert = true;
                 self.status_message = "Файл открыт".to_string();
+                self.save_recovery_state();
             }
             Err(e) => self.status_message = format!("Ошибка: {e}"),
         }
@@ -365,30 +470,28 @@ impl ForgeApp {
         let interval = self.settings.autosave_interval_secs.max(5);
         if self.last_autosave.elapsed().as_secs() >= interval {
             self.last_autosave = Instant::now();
-            if self.doc_modified || !self.markdown.is_empty() {
-                let session = SessionState {
-                    markdown: self.markdown.clone(),
-                    profile: Some(self.profile),
-                    file_path: self.file_path.clone(),
-                };
-                let ok = self.storage.save_autosave(&self.markdown).is_ok()
-                    && self.storage.save_session(&session).is_ok();
-                self.autosave_status =
-                    if ok { "автосохранено".to_string() } else { "ошибка автосохранения".to_string() };
-            }
+            self.save_recovery_state();
         }
     }
 
-    fn save_all_state(&self) {
-        let _ = self.storage.save_settings(&self.settings);
-        let _ = self.storage.save_recent(&self.recent);
-        let _ = self.storage.save_user_templates(&self.user_templates);
+    fn save_all_state(&mut self) {
+        if let Err(error) = self.persist_settings() {
+            eprintln!("Не удалось сохранить настройки: {error:#}");
+        }
+        if let Err(error) = self.storage.save_recent(&self.recent) {
+            eprintln!("Не удалось сохранить список недавних файлов: {error:#}");
+        }
+        if let Err(error) = self.storage.save_user_templates(&self.user_templates) {
+            eprintln!("Не удалось сохранить шаблоны: {error:#}");
+        }
         let session = SessionState {
             markdown: self.markdown.clone(),
             profile: Some(self.profile),
             file_path: self.file_path.clone(),
         };
-        let _ = self.storage.save_session(&session);
+        if let Err(error) = self.storage.save_session(&session) {
+            eprintln!("Не удалось сохранить сессию: {error:#}");
+        }
     }
 
     // ------------------------------------------------------------------
@@ -402,7 +505,7 @@ impl ForgeApp {
                 ui.separator();
 
                 if ui.button("📄 Новый").clicked() {
-                    self.new_document();
+                    self.request_new_document();
                 }
                 if ui.button("📂 Открыть").clicked() {
                     self.open_document();
@@ -422,7 +525,7 @@ impl ForgeApp {
                     });
                 }
                 if let Some(p) = open_recent {
-                    self.open_path(p);
+                    self.request_open_path(p);
                 }
                 if ui.button("💾 Сохранить").clicked() {
                     self.save_document();
@@ -466,7 +569,9 @@ impl ForgeApp {
                     .on_hover_text("Автообновление результата при вводе")
                     .changed()
                 {
-                    let _ = self.storage.save_settings(&self.settings);
+                    if let Err(error) = self.persist_settings() {
+                        self.status_message = format!("Ошибка сохранения настроек: {error:#}");
+                    }
                 }
                 if !self.settings.auto_convert && ui.button("⟳ Конвертировать").clicked() {
                     self.convert();
@@ -725,6 +830,37 @@ impl ForgeApp {
     }
 
     fn ui_windows(&mut self, ctx: &egui::Context) {
+        if self.pending_document_action.is_some() {
+            let mut open = true;
+            let mut discard = false;
+            let mut cancel = false;
+            egui::Window::new("Несохранённые изменения")
+                .open(&mut open)
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ctx, |ui| {
+                    ui.label("Текущий документ изменён. Сохраните его или отмените замену.");
+                    ui.horizontal(|ui| {
+                        if ui.button("Не сохранять").clicked() {
+                            discard = true;
+                        }
+                        if ui.button("Отмена").clicked() {
+                            cancel = true;
+                        }
+                    });
+                });
+            if !open || cancel {
+                self.pending_document_action = None;
+            } else if discard {
+                match self.pending_document_action.take() {
+                    Some(PendingDocumentAction::New) => self.new_document(),
+                    Some(PendingDocumentAction::Open(path)) => self.open_path(path),
+                    None => {}
+                }
+            }
+        }
+
         // диалог спецвставки
         if let Some(dialog) = &mut self.insert_dialog {
             match dialog.show(ctx, &self.settings) {
@@ -740,12 +876,27 @@ impl ForgeApp {
         // настройки
         if self.show_settings {
             let mut open = self.show_settings;
-            let changed = dialogs::show_settings_window(ctx, &mut open, &mut self.settings);
+            let previous_storage_dir = self.settings.storage_dir.clone();
+            let change = dialogs::show_settings_window(
+                ctx,
+                &mut open,
+                &mut self.settings,
+                &mut self.storage_dir_draft,
+            );
             self.show_settings = open;
-            if changed {
+            if change.storage_dir_changed {
+                if let Err(error) = self.switch_storage() {
+                    self.settings.storage_dir = previous_storage_dir.clone();
+                    self.storage_dir_draft = previous_storage_dir;
+                    self.status_message = format!("Ошибка смены каталога хранения: {error:#}");
+                }
+            }
+            if change.changed {
                 apply_theme(ctx, self.settings.theme);
                 self.needs_convert = true;
-                let _ = self.storage.save_settings(&self.settings);
+                if let Err(error) = self.persist_settings() {
+                    self.status_message = format!("Ошибка сохранения настроек: {error:#}");
+                }
             }
         }
 

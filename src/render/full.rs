@@ -6,13 +6,16 @@
 //! `[color]`-токены (см. `highlight::highlight_code_to_bbcode`).
 
 use crate::diagnostics::{Diagnostic, Diagnostics};
-use crate::highlight::highlight_code_to_bbcode;
+use crate::highlight::{code_has_bbcode_like_tokens, escape_bbcode_tags, highlight_code_to_bbcode};
 use crate::model::{BlockNode, Document, InlineNode, TableAlignment};
 use crate::parser::plain_text_of;
 use crate::profiles::{LineBreakStyle, RenderOptions};
 use crate::tables::{ExtractedTable, table_file_name};
 
-use super::RenderResult;
+use super::{RenderResult, flatten_images_in_link_label};
+
+const FULL_ALLOWED_TAGS: &[&str] =
+    &["b", "i", "u", "s", "url", "user", "color", "size", "icon", "code"];
 
 pub fn render(doc: &Document, opts: &RenderOptions, manual_code: bool) -> RenderResult {
     let mut r = FullRenderer { opts, manual_code, diags: Diagnostics::default(), tables: Vec::new() };
@@ -83,11 +86,17 @@ impl FullRenderer<'_> {
         self.diags.extend(inner_renderer.diags);
         self.tables = inner_renderer.tables;
 
-        inner
-            .lines()
-            .map(|line| format!(">>{}", line.trim_start_matches('>')))
-            .collect::<Vec<_>>()
-            .join("\n")
+        match self.opts.quote_style {
+            crate::profiles::QuoteStyle::LinePrefix => inner
+                .lines()
+                .map(|line| format!(">>{}", line.trim_start_matches('>')))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            crate::profiles::QuoteStyle::FullBlock if !inner.is_empty() => {
+                format!("------\n{inner}\n------")
+            }
+            crate::profiles::QuoteStyle::FullBlock => String::new(),
+        }
     }
 
     /// Оформление блока кода. Вне ручного режима — документированный `[code]...[/code]`
@@ -105,11 +114,23 @@ impl FullRenderer<'_> {
         self.diags.push(Diagnostic::info(
             "Код визуально выделен префиксом «>>»: подсветка синтаксиса не гарантируется Bitrix24.",
         ));
+        if code_has_bbcode_like_tokens(code) {
+            self.diags.push(Diagnostic::warn(
+                "BBCode-подобные последовательности в коде экранированы полноширинными скобками.",
+            ));
+        }
         if self.opts.manual_code_colors {
             highlight_code_to_bbcode(language.unwrap_or(""), code)
         } else {
             code.lines()
-                .map(|line| if line.is_empty() { ">>".to_string() } else { format!(">>    {line}") })
+                .map(|line| {
+                    if line.is_empty() {
+                        ">>".to_string()
+                    } else {
+                        let (line, _) = escape_bbcode_tags(line, &[]);
+                        format!(">>    {line}")
+                    }
+                })
                 .collect::<Vec<_>>()
                 .join("\n")
         }
@@ -199,7 +220,15 @@ impl FullRenderer<'_> {
         let mut out = String::new();
         for node in inlines {
             match node {
-                InlineNode::Text(t) => out.push_str(t),
+                InlineNode::Text(t) => {
+                    let (text, escaped) = escape_bbcode_tags(t, FULL_ALLOWED_TAGS);
+                    if escaped {
+                        self.diags.push(Diagnostic::warn(
+                            "BBCode-теги вне профиля экранированы полноширинными скобками.",
+                        ));
+                    }
+                    out.push_str(&text);
+                }
                 InlineNode::Bold(c) => {
                     let inner = self.render_inlines(c);
                     out.push_str(&format!("[b]{inner}[/b]"));
@@ -217,7 +246,8 @@ impl FullRenderer<'_> {
                     out.push_str(&format!("[s]{inner}[/s]"));
                 }
                 InlineNode::Link { text, url } => {
-                    let label = self.render_inlines(text);
+                    let label_nodes = flatten_images_in_link_label(text);
+                    let label = self.render_inlines(&label_nodes);
                     if label.is_empty() || label == *url {
                         out.push_str(&format!("[url]{url}[/url]"));
                     } else {
@@ -228,26 +258,34 @@ impl FullRenderer<'_> {
                     let label = self.render_inlines(text);
                     out.push_str(&format!("[user={id}]{label}[/user]"));
                 }
-                InlineNode::Color { content, .. } => {
+                InlineNode::Color { hex, content } => {
                     let inner = self.render_inlines(content);
-                    self.diags.push(Diagnostic::warn("Цвет удалён: тег [color] не входит в поддерживаемый набор."));
-                    out.push_str(&inner);
+                    out.push_str(&format!("[color={hex}]{inner}[/color]"));
                 }
-                InlineNode::Size { content, .. } => {
+                InlineNode::Size { px, content } => {
                     let inner = self.render_inlines(content);
-                    self.diags.push(Diagnostic::warn("Размер текста удалён: тег [size] не входит в поддерживаемый набор."));
-                    out.push_str(&inner);
+                    out.push_str(&format!("[size={px}]{inner}[/size]"));
                 }
-                InlineNode::Icon { url, .. } => {
-                    self.diags.push(Diagnostic::warn("Иконка заменена URL: тег [icon] не входит в поддерживаемый набор."));
-                    out.push_str(url);
+                InlineNode::Icon { url, params } => {
+                    let params = if params.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" {params}")
+                    };
+                    out.push_str(&format!("[icon={url}{params}]"));
                 }
                 InlineNode::Image { url, alt, .. } => {
                     let image_link = self.render_image_link(url, alt);
                     out.push_str(&image_link);
                 }
                 InlineNode::Code(code) => {
-                    out.push_str(&format!("[b]{code}[/b]"));
+                    let (code, escaped) = escape_bbcode_tags(code, &[]);
+                    if escaped {
+                        self.diags.push(Diagnostic::warn(
+                            "BBCode-подобные последовательности в inline-коде экранированы полноширинными скобками.",
+                        ));
+                    }
+                    out.push_str(&format!("[color=#6b7280][b]{code}[/b][/color]"));
                 }
                 InlineNode::SoftBreak | InlineNode::HardBreak => out.push_str(self.br()),
             }
@@ -338,9 +376,9 @@ mod tests {
     }
 
     #[test]
-    fn quote_always_uses_line_prefix() {
+    fn quote_style_full_block_wraps_the_quote() {
         let opts = RenderOptions { quote_style: QuoteStyle::FullBlock, ..Default::default() };
-        assert_eq!(render_md_opts("> цитата", &opts), ">>цитата");
+        assert_eq!(render_md_opts("> цитата", &opts), "------\nцитата\n------");
     }
 
     #[test]
@@ -349,8 +387,11 @@ mod tests {
     }
 
     #[test]
-    fn inline_code_uses_bold_only() {
-        assert_eq!(render_md("run `ls` now"), "run [b]ls[/b] now");
+    fn inline_code_uses_configured_color_and_bold() {
+        assert_eq!(
+            render_md("run `ls` now"),
+            "run [color=#6b7280][b]ls[/b][/color] now"
+        );
     }
 
     #[test]
@@ -393,14 +434,26 @@ mod tests {
     }
 
     #[test]
-    fn icon_render() {
-        assert_eq!(render_md("[icon=https://e.com/i.png size=16 title=Hello]"), "https://e.com/i.png");
+    fn linked_image_uses_the_outer_link_without_nesting_urls() {
+        let out = render_md("[![alt](https://e.com/i.png)](https://e.com/page)");
+        assert_eq!(out, "[url=https://e.com/page]alt[/url]");
     }
 
     #[test]
-    fn color_and_size_are_removed() {
-        assert_eq!(render_md("[color=#F00]красный[/color]"), "красный");
-        assert_eq!(render_md("[size=20]большой[/size]"), "большой");
+    fn icon_render() {
+        assert_eq!(
+            render_md("[icon=https://e.com/i.png size=16 title=Hello]"),
+            "[icon=https://e.com/i.png size=16 title=Hello]"
+        );
+    }
+
+    #[test]
+    fn color_and_size_are_preserved() {
+        assert_eq!(
+            render_md("[color=#F00]красный[/color]"),
+            "[color=#f00]красный[/color]"
+        );
+        assert_eq!(render_md("[size=20]большой[/size]"), "[size=20]большой[/size]");
     }
 
     #[test]
@@ -439,5 +492,30 @@ mod tests {
     #[test]
     fn user_render() {
         assert_eq!(render_md("[user=111]Иван Иванов[/user]"), "[user=111]Иван Иванов[/user]");
+    }
+
+    #[test]
+    fn excluded_bbcode_tags_are_escaped_before_paste() {
+        let doc = parse_markdown("[send=1]name[/send]").document;
+        let result = render(&doc, &RenderOptions::default(), false);
+
+        assert_eq!(result.output, "［send=1］name［/send］");
+        assert!(result.diagnostics.warnings() > 0);
+    }
+
+    #[test]
+    fn supported_special_tags_inside_markdown_formatting_stay_active() {
+        assert_eq!(render_md("[u]**bold**[/u]"), "[u][b]bold[/b][/u]");
+    }
+
+    #[test]
+    fn manual_code_highlight_escapes_bbcode_like_source() {
+        let doc = parse_markdown("```rust\n[b]literal[/b]\n```").document;
+        let result = render(&doc, &RenderOptions::default(), true);
+
+        assert!(result.output.contains("［b］literal［/b］"));
+        assert!(result.diagnostics.items.iter().any(|diagnostic| {
+            diagnostic.message.contains("экранированы полноширинными скобками")
+        }));
     }
 }

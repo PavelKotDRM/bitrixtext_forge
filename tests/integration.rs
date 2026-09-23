@@ -224,7 +224,7 @@ fn task_lists_and_nested_markdown_keep_structure() {
 
     assert_eq!(
         out,
-        "• ☐ [b]Подготовить[/b] [url=https://example.com/doc]документ[/url]\n    • ☑ [b]проверить[/b]"
+        "• ☐ [b]Подготовить[/b] [url=https://example.com/doc]документ[/url]\n    • ☑ [color=#6b7280][b]проверить[/b][/color]"
     );
 }
 
@@ -237,16 +237,20 @@ fn list_item_keeps_multiple_adjacent_formatted_runs() {
 }
 
 #[test]
-fn indented_nested_lists_keep_structure() {
-    let md = "    + Create a list by starting a line with `+`, `-`, or `*`\n    + Sub-lists are made by indenting 2 spaces:\n     - Marker character change forces new list start:\n        * Ac tristique libero volutpat at\n        + Facilisis in pretium nisl aliquet\n        - Nulla volutpat aliquam velit\n    + Very easy!";
-    let plain_expected = "• Create a list by starting a line with +, -, or *\n• Sub-lists are made by indenting 2 spaces:\n    • Marker character change forces new list start:\n        • Ac tristique libero volutpat at\n        • Facilisis in pretium nisl aliquet\n        • Nulla volutpat aliquam velit\n• Very easy!";
+fn four_space_indented_list_markers_remain_code() {
+    let md = "    - literal list-like code\n    - another code line";
+    let doc = parse_markdown(md).document;
 
+    match &doc.blocks[..] {
+        [BlockNode::CodeBlock { code, .. }] => {
+            assert_eq!(code, "- literal list-like code\n- another code line");
+        }
+        other => panic!("expected an indented code block, got {other:?}"),
+    }
     assert_eq!(
         convert(md, ProfileKind::Full),
-        "• Create a list by starting a line with [b]+[/b], [b]-[/b], or [b]*[/b]\n• Sub-lists are made by indenting 2 spaces:\n    • Marker character change forces new list start:\n        • Ac tristique libero volutpat at\n        • Facilisis in pretium nisl aliquet\n        • Nulla volutpat aliquam velit\n• Very easy!"
+        "[code]\n- literal list-like code\n- another code line\n[/code]"
     );
-    assert_eq!(convert(md, ProfileKind::CoreSafe), plain_expected);
-    assert_eq!(convert(md, ProfileKind::PlainText), plain_expected);
 }
 
 #[test]
@@ -280,4 +284,3 @@ fn tables_are_numbered_sequentially_and_extracted_for_export() {
     assert!(res.output.contains("table_2.xlsx"));
     assert_eq!(res.tables.len(), 2);
 }
-

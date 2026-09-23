@@ -5,6 +5,8 @@
 //! документированной подсветки, поэтому это лишь визуальное приближение,
 //! не гарантированное самим Bitrix24.
 
+use crate::model::EXCLUDED_TAGS;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TokenKind {
     Keyword,
@@ -118,8 +120,9 @@ pub fn highlight_code_to_bbcode(lang: &str, code: &str) -> String {
             lines_out.push(">>".to_string());
             continue;
         }
+        let (line, _) = escape_bbcode_tags(line, &[]);
         let mut out = String::from(PREFIX);
-        for tok in highlight_line(lang, line) {
+        for tok in highlight_line(lang, &line) {
             match bbcode_color_for(tok.kind) {
                 Some(hex) if !tok.text.trim().is_empty() => {
                     out.push_str(&format!("[color={hex}]{}[/color]", tok.text));
@@ -132,15 +135,62 @@ pub fn highlight_code_to_bbcode(lang: &str, code: &str) -> String {
     lines_out.join("\n")
 }
 
+pub(crate) fn escape_bbcode_tags(source: &str, allowed_tags: &[&str]) -> (String, bool) {
+    let mut output = String::with_capacity(source.len());
+    let mut position = 0;
+    let mut escaped = false;
+
+    while let Some(relative_start) = source[position..].find('[') {
+        let start = position + relative_start;
+        output.push_str(&source[position..start]);
+        let Some(relative_end) = source[start + 1..].find(']') else {
+            output.push_str(&source[start..]);
+            return (output, escaped);
+        };
+        let end = start + 1 + relative_end;
+        let raw_tag = &source[start + 1..end];
+        let body = raw_tag.strip_prefix('/').unwrap_or(raw_tag);
+        let name_end = body.find('=').unwrap_or(body.len());
+        let name = &body[..name_end];
+        let valid_name = !name.is_empty()
+            && name.chars().next().is_some_and(|character| character.is_ascii_alphabetic())
+            && name.chars().all(|character| {
+                character.is_ascii_alphanumeric() || character == '_' || character == '-'
+            });
+        let known_tag = [
+            "b", "i", "u", "s", "url", "user", "color", "size", "icon", "code",
+        ]
+        .iter()
+        .any(|known| known.eq_ignore_ascii_case(name));
+        let excluded = EXCLUDED_TAGS
+            .iter()
+            .any(|excluded| excluded.eq_ignore_ascii_case(name));
+        let allowed = allowed_tags
+            .iter()
+            .any(|allowed| allowed.eq_ignore_ascii_case(name));
+        let has_attributes = body.as_bytes().get(name_end) == Some(&b'=');
+        let is_closing = raw_tag.starts_with('/');
+        let is_tag = valid_name && (known_tag || excluded || has_attributes || is_closing);
+
+        if is_tag && (excluded || !allowed) {
+            output.push('［');
+            output.push_str(raw_tag);
+            output.push('］');
+            escaped = true;
+        } else {
+            output.push_str(&source[start..=end]);
+        }
+        position = end + 1;
+    }
+
+    output.push_str(&source[position..]);
+    (output, escaped)
+}
+
 /// Есть ли в коде BBCode-подобные конструкции, которые Bitrix24 может
 /// интерпретировать как теги при выводе без контейнера `[code]`.
 pub fn code_has_bbcode_like_tokens(code: &str) -> bool {
-    const RISKY: [&str; 12] = [
-        "[b]", "[/b]", "[i]", "[/i]", "[u]", "[/u]", "[s]", "[/s]", "[url", "[code", "[color",
-        "[size",
-    ];
-    let lower = code.to_ascii_lowercase();
-    RISKY.iter().any(|t| lower.contains(t))
+    escape_bbcode_tags(code, &[]).1
 }
 
 fn highlight_segment(lang: &str, seg: &str) -> Vec<Token> {
@@ -318,5 +368,29 @@ mod tests {
         assert!(code_has_bbcode_like_tokens("s = \"[b]bold[/b]\""));
         assert!(code_has_bbcode_like_tokens("tag = '[URL=x]'"));
         assert!(!code_has_bbcode_like_tokens("arr[0] = map[key]"));
+    }
+
+    #[test]
+    fn escapes_bbcode_like_tokens_without_changing_array_indexes() {
+        let (escaped, changed) = escape_bbcode_tags("arr[0] = [send=1]name[/send]", &[]);
+
+        assert!(changed);
+        assert_eq!(escaped, "arr[0] = ［send=1］name［/send］");
+    }
+
+    #[test]
+    fn keeps_profile_allowed_tags() {
+        let (text, changed) = escape_bbcode_tags("[b]bold[/b] [color=#fff]red[/color]", &["b"]);
+
+        assert!(changed);
+        assert_eq!(text, "[b]bold[/b] ［color=#fff］red［/color］");
+    }
+
+    #[test]
+    fn escapes_bbcode_like_tokens_in_manual_highlight() {
+        assert_eq!(
+            highlight_code_to_bbcode("", "[b]literal[/b]"),
+            ">>    ［b］literal［/b］"
+        );
     }
 }

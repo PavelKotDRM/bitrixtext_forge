@@ -100,7 +100,12 @@ fn append_bbcode(ui: &Ui, job: &mut LayoutJob, source: &str, fmt: Fmt) {
         if let Some((closing_tag, next_fmt)) = opening_tag(tag, fmt)
             && let Some(content_end) = find_closing_tag(after_open, closing_tag)
         {
-            append_bbcode(ui, job, &after_open[..content_end], next_fmt);
+            let content = &after_open[..content_end];
+            if next_fmt.code {
+                job.append(content, 0.0, next_fmt.text_format(ui));
+            } else {
+                append_bbcode(ui, job, content, next_fmt);
+            }
             remaining = &after_open[content_end + closing_tag.len() + 3..];
             continue;
         }
@@ -193,6 +198,17 @@ mod tests {
         assert!(opening_tag("url=https://example.com", Fmt::base(16.0)).is_some());
         assert!(opening_tag("code", Fmt::base(16.0)).is_some());
         assert!(opening_tag("img=https://example.com/image.png", Fmt::base(16.0)).is_none());
+    }
+
+    #[test]
+    fn renders_code_contents_as_literal_text() {
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let mut job = LayoutJob::default();
+            append_bbcode(ui, &mut job, "[code][b]literal[/b][/code]", Fmt::base(16.0));
+            assert_eq!(job.text, "[b]literal[/b]");
+        });
+        output.textures_delta.clear();
     }
 
 }

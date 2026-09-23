@@ -48,7 +48,6 @@ impl Storage {
         Self { base_dir }
     }
 
-    #[allow(dead_code)]
     pub fn base_dir(&self) -> &Path {
         &self.base_dir
     }
@@ -85,7 +84,11 @@ impl Storage {
     // --- settings ---
 
     pub fn load_settings(&self) -> Result<AppSettings> {
-        Ok(self.load_json::<AppSettings>("settings.json")?.unwrap_or_default())
+        Ok(self.load_settings_if_exists()?.unwrap_or_default())
+    }
+
+    pub fn load_settings_if_exists(&self) -> Result<Option<AppSettings>> {
+        self.load_json("settings.json")
     }
 
     pub fn save_settings(&self, s: &AppSettings) -> Result<()> {
@@ -205,6 +208,7 @@ mod tests {
         let (s, dir) = temp_storage();
         let cfg = s.load_settings().unwrap();
         assert!(cfg.auto_convert);
+        assert!(s.load_settings_if_exists().unwrap().is_none());
         let _ = fs::remove_dir_all(dir);
     }
 }

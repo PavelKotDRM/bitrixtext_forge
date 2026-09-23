@@ -29,8 +29,22 @@ function Get-LinuxTarget {
     }
 }
 
-if ($Clean -and (Test-Path $outputRoot)) {
-    Remove-Item -Recurse -Force $outputRoot
+if ($Clean) {
+    $normalizedProjectRoot = [System.IO.Path]::GetFullPath($projectRoot).TrimEnd([char[]]@('\', '/'))
+    $normalizedOutputRoot = [System.IO.Path]::GetFullPath($outputRoot)
+    $projectRootPrefix = $normalizedProjectRoot + [System.IO.Path]::DirectorySeparatorChar
+
+    if (
+        $normalizedOutputRoot.Equals($normalizedProjectRoot, [System.StringComparison]::OrdinalIgnoreCase) -or
+        -not $normalizedOutputRoot.StartsWith($projectRootPrefix, [System.StringComparison]::OrdinalIgnoreCase)
+    ) {
+        throw "Refusing to clean an output directory outside the project root: $normalizedOutputRoot"
+    }
+
+    $outputRoot = $normalizedOutputRoot
+    if (Test-Path $outputRoot) {
+        Remove-Item -Recurse -Force $outputRoot
+    }
 }
 
 foreach ($targetPlatform in $Platform) {

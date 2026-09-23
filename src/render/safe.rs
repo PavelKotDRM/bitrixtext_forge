@@ -5,12 +5,15 @@
 //! Медиа и служебные элементы заменяются безопасным текстом с предупреждением.
 
 use crate::diagnostics::{Diagnostic, Diagnostics};
+use crate::highlight::escape_bbcode_tags;
 use crate::model::{BlockNode, Document, InlineNode, TableAlignment};
 use crate::parser::plain_text_of;
 use crate::profiles::RenderOptions;
 use crate::tables::{ExtractedTable, table_file_name};
 
-use super::RenderResult;
+use super::{RenderResult, flatten_images_in_link_label};
+
+const CORE_SAFE_ALLOWED_TAGS: &[&str] = &["b", "i", "u", "s", "url"];
 
 pub fn render(doc: &Document, opts: &RenderOptions) -> RenderResult {
     let mut r = SafeRenderer { opts, diags: Diagnostics::default(), tables: Vec::new() };
@@ -64,7 +67,22 @@ impl SafeRenderer<'_> {
                     self.diags.push(Diagnostic::info(
                         "Код оформлен отступом в 4 пробела: тег [code] отключён в Core Safe Profile (см. настройки).",
                     ));
-                    code.lines().map(|line| format!("    {line}")).collect::<Vec<_>>().join(self.br())
+                    let mut escaped = false;
+                    let output = code
+                        .lines()
+                        .map(|line| {
+                            let (line, changed) = escape_bbcode_tags(line, &[]);
+                            escaped |= changed;
+                            format!("    {line}")
+                        })
+                        .collect::<Vec<_>>()
+                        .join(self.br());
+                    if escaped {
+                        self.diags.push(Diagnostic::warn(
+                            "BBCode-подобные последовательности в коде экранированы полноширинными скобками.",
+                        ));
+                    }
+                    output
                 }
             }
             BlockNode::List { ordered, start, items } => {
@@ -150,7 +168,15 @@ impl SafeRenderer<'_> {
         let mut out = String::new();
         for node in inlines {
             match node {
-                InlineNode::Text(t) => out.push_str(t),
+                InlineNode::Text(t) => {
+                    let (text, escaped) = escape_bbcode_tags(t, CORE_SAFE_ALLOWED_TAGS);
+                    if escaped {
+                        self.diags.push(Diagnostic::warn(
+                            "BBCode-теги вне профиля экранированы полноширинными скобками.",
+                        ));
+                    }
+                    out.push_str(&text);
+                }
                 InlineNode::Bold(c) => {
                     let inner = self.render_inlines(c);
                     out.push_str(&format!("[b]{inner}[/b]"));
@@ -168,7 +194,8 @@ impl SafeRenderer<'_> {
                     out.push_str(&format!("[s]{inner}[/s]"));
                 }
                 InlineNode::Link { text, url } => {
-                    let label = self.render_inlines(text);
+                    let label_nodes = flatten_images_in_link_label(text);
+                    let label = self.render_inlines(&label_nodes);
                     if label.is_empty() || label == *url {
                         out.push_str(&format!("[url]{url}[/url]"));
                     } else {
@@ -203,7 +230,13 @@ impl SafeRenderer<'_> {
                     self.warn_loss(
                         "Inline code Markdown выведен обычным текстом: Bitrix24 поддерживает [code] только как блочный элемент.",
                     );
-                    out.push_str(code);
+                    let (code, escaped) = escape_bbcode_tags(code, &[]);
+                    if escaped {
+                        self.diags.push(Diagnostic::warn(
+                            "BBCode-подобные последовательности в inline-коде экранированы полноширинными скобками.",
+                        ));
+                    }
+                    out.push_str(&code);
                 }
                 InlineNode::SoftBreak | InlineNode::HardBreak => out.push_str(self.br()),
             }
@@ -281,8 +314,25 @@ mod tests {
     }
 
     #[test]
+    fn linked_image_uses_the_outer_link_without_nesting_urls() {
+        let res = render_md_res(
+            "[![alt](https://e.com/i.png)](https://e.com/page)",
+            &RenderOptions::default(),
+        );
+        assert_eq!(res.output, "[url=https://e.com/page]alt[/url]");
+    }
+
+    #[test]
     fn unsupported_tags_remain_plain_text() {
         let res = render_md_res("[timestamp=1700000000] [disk=5]", &RenderOptions::default());
-        assert_eq!(res.output, "[timestamp=1700000000] [disk=5]");
+        assert_eq!(res.output, "［timestamp=1700000000］ ［disk=5］");
+    }
+
+    #[test]
+    fn excluded_tags_are_escaped_even_when_wrapping_markdown() {
+        let res = render_md_res("[send=1]**name**[/send]", &RenderOptions::default());
+
+        assert_eq!(res.output, "［send=1］[b]name[/b]［/send］");
+        assert!(res.diagnostics.warnings() > 0);
     }
 }

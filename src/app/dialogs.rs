@@ -208,8 +208,20 @@ impl InsertDialog {
 // ----------------------------------------------------------------------------
 
 /// Возвращает true, если настройки изменились.
-pub fn show_settings_window(ctx: &egui::Context, open: &mut bool, settings: &mut AppSettings) -> bool {
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct SettingsWindowChange {
+    pub changed: bool,
+    pub storage_dir_changed: bool,
+}
+
+pub fn show_settings_window(
+    ctx: &egui::Context,
+    open: &mut bool,
+    settings: &mut AppSettings,
+    storage_dir_draft: &mut String,
+) -> SettingsWindowChange {
     let mut changed = false;
+    let mut storage_dir_changed = false;
     egui::Window::new("Настройки")
         .open(open)
         .collapsible(false)
@@ -351,13 +363,25 @@ pub fn show_settings_window(ctx: &egui::Context, open: &mut bool, settings: &mut
                     settings.autosave_interval_secs = secs as u64;
                     changed = true;
                 }
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     ui.label("Каталог хранения (пусто = по умолчанию):");
+                    ui.text_edit_singleline(storage_dir_draft);
+                    if ui.button("Применить").clicked() {
+                        let new_storage_dir = storage_dir_draft.trim().to_string();
+                        if settings.storage_dir != new_storage_dir {
+                            settings.storage_dir = new_storage_dir;
+                            storage_dir_changed = true;
+                            changed = true;
+                        }
+                        *storage_dir_draft = settings.storage_dir.clone();
+                    }
                 });
-                changed |= ui.text_edit_singleline(&mut settings.storage_dir).changed();
             });
         });
-    changed
+    SettingsWindowChange {
+        changed,
+        storage_dir_changed,
+    }
 }
 
 // ----------------------------------------------------------------------------
