@@ -1,6 +1,6 @@
 [package]
 name = "bitrixtext_forge"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "Markdown to Bitrix24 BBCode converter with egui GUI"
 
