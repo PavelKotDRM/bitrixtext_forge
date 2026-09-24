@@ -48,6 +48,10 @@ cargo test
 cargo build --release
 ```
 
+Workflow **Code Quality** в GitHub Actions можно запустить вручную: откройте
+**Actions → Code Quality → Run workflow**. Он запускает Clippy с запретом
+предупреждений и выполняет тесты.
+
 ## Сборка
 
 Для Linux-целей требуются Docker Desktop с включённым Buildx и доступом к
@@ -77,6 +81,17 @@ cargo build --release
 нужно запускать на Windows. Для macOS требуется нативный Mac: Docker на
 Linux/Windows не включает распространяемый SDK Apple, необходимый для
 корректной сборки приложения.
+
+Для публикации GitHub Release сначала обновите версию пакета в `Cargo.toml`,
+затем отправьте совпадающий тег. Например, после установки версии `0.1.2`:
+
+```powershell
+git tag v0.1.2
+git push origin v0.1.2
+```
+
+Workflow соберёт Linux `x86_64`, Linux `aarch64` и Windows `x86_64` и приложит
+к GitHub Release Linux-архивы `.tar.gz` и Windows-файл `.exe`.
 
 ## Вход и результат
 

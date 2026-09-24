@@ -44,6 +44,10 @@ cargo test
 cargo build --release
 ```
 
+The **Code Quality** GitHub Actions workflow can be started manually from
+**Actions → Code Quality → Run workflow**. It runs Clippy with warnings denied
+and executes the test suite.
+
 ## Build
 
 Docker Desktop with Buildx enabled and access to Linux containers is required
@@ -72,6 +76,19 @@ Use `-SkipWindows` for a Linux-only build. The Windows artifact is built
 natively with `cargo build --release`; run the script on a Windows host.
 macOS requires a native Mac: Docker on Linux/Windows does not include the
 redistributable Apple SDK required to build the application correctly.
+
+To publish a GitHub Release, first update the package version in `Cargo.toml`,
+then push the matching version tag. For example, after setting the version to
+`0.1.2`:
+
+```powershell
+git tag v0.1.2
+git push origin v0.1.2
+```
+
+The release workflow builds Linux `x86_64`, Linux `aarch64`, and Windows
+`x86_64` and attaches the Linux `.tar.gz` archives and Windows `.exe` to the
+GitHub Release.
 
 ## Input and Output
 

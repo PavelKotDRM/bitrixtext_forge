@@ -568,10 +568,9 @@ impl ForgeApp {
                     .checkbox(&mut self.settings.auto_convert, "Авто")
                     .on_hover_text("Автообновление результата при вводе")
                     .changed()
+                    && let Err(error) = self.persist_settings()
                 {
-                    if let Err(error) = self.persist_settings() {
-                        self.status_message = format!("Ошибка сохранения настроек: {error:#}");
-                    }
+                    self.status_message = format!("Ошибка сохранения настроек: {error:#}");
                 }
                 if !self.settings.auto_convert && ui.button("⟳ Конвертировать").clicked() {
                     self.convert();
@@ -884,12 +883,12 @@ impl ForgeApp {
                 &mut self.storage_dir_draft,
             );
             self.show_settings = open;
-            if change.storage_dir_changed {
-                if let Err(error) = self.switch_storage() {
-                    self.settings.storage_dir = previous_storage_dir.clone();
-                    self.storage_dir_draft = previous_storage_dir;
-                    self.status_message = format!("Ошибка смены каталога хранения: {error:#}");
-                }
+            if change.storage_dir_changed
+                && let Err(error) = self.switch_storage()
+            {
+                self.settings.storage_dir = previous_storage_dir.clone();
+                self.storage_dir_draft = previous_storage_dir;
+                self.status_message = format!("Ошибка смены каталога хранения: {error:#}");
             }
             if change.changed {
                 apply_theme(ctx, self.settings.theme);

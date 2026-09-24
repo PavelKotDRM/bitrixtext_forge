@@ -1,0 +1,143 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  validate-tag:
+    name: Validate version tag
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Check tag against Cargo.toml
+        shell: bash
+        run: |
+          package_version="$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')"
+          tag_version="${GITHUB_REF_NAME#v}"
+          if [[ "$GITHUB_REF_NAME" != v* || "$tag_version" != "$package_version" ]]; then
+            echo "::error::Tag '$GITHUB_REF_NAME' must match Cargo.toml version v$package_version."
+            exit 1
+          fi
+
+  build-linux:
+    name: Build Linux ${{ matrix.architecture }}
+    needs: validate-tag
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: x86_64
+            platform: linux/amd64
+            docker_architecture: amd64
+          - architecture: aarch64
+            platform: linux/arm64
+            docker_architecture: arm64
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Linux binary
+        shell: bash
+        run: |
+          mkdir -p build-output release-assets
+          docker buildx build \
+            --platform "${{ matrix.platform }}" \
+            --file Dockerfile \
+            --output type=local,dest=build-output \
+            --provenance=false \
+            .
+          cp "build-output/bitrixtext_forge-linux-${{ matrix.docker_architecture }}" \
+            "release-assets/bitrixtext_forge-linux-${{ matrix.architecture }}"
+          chmod +x "release-assets/bitrixtext_forge-linux-${{ matrix.architecture }}"
+          tar -czf "release-assets/bitrixtext_forge-linux-${{ matrix.architecture }}.tar.gz" \
+            -C release-assets \
+            "bitrixtext_forge-linux-${{ matrix.architecture }}"
+
+      - name: Upload Linux release asset
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-linux-${{ matrix.architecture }}
+          path: release-assets/bitrixtext_forge-linux-${{ matrix.architecture }}.tar.gz
+          if-no-files-found: error
+
+  build-windows:
+    name: Build Windows x86_64
+    needs: validate-tag
+    runs-on: windows-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build Windows binary
+        run: cargo build --release --locked
+
+      - name: Prepare Windows release asset
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path release-assets | Out-Null
+          Copy-Item `
+            -Path "target\release\bitrixtext_forge.exe" `
+            -Destination "release-assets\bitrixtext_forge-windows-x86_64.exe"
+
+      - name: Upload Windows release asset
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-windows-x86_64
+          path: release-assets\bitrixtext_forge-windows-x86_64.exe
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub Release
+    needs:
+      - build-linux
+      - build-windows
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download release assets
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Verify release assets
+        shell: bash
+        run: |
+          test -f release-assets/bitrixtext_forge-linux-x86_64.tar.gz
+          test -f release-assets/bitrixtext_forge-linux-aarch64.tar.gz
+          test -f release-assets/bitrixtext_forge-windows-x86_64.exe
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          token: ${{ github.token }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            release-assets/bitrixtext_forge-linux-x86_64.tar.gz
+            release-assets/bitrixtext_forge-linux-aarch64.tar.gz
+            release-assets/bitrixtext_forge-windows-x86_64.exe
