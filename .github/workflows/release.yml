@@ -132,7 +132,7 @@ jobs:
           test -f release-assets/bitrixtext_forge-windows-x86_64.exe
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           token: ${{ github.token }}
           generate_release_notes: true
