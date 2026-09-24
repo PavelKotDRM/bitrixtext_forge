@@ -70,7 +70,7 @@ jobs:
             "bitrixtext_forge-linux-${{ matrix.architecture }}"
 
       - name: Upload Linux release asset
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-linux-${{ matrix.architecture }}
           path: release-assets/bitrixtext_forge-linux-${{ matrix.architecture }}.tar.gz
@@ -102,7 +102,7 @@ jobs:
             -Destination "release-assets\bitrixtext_forge-windows-x86_64.exe"
 
       - name: Upload Windows release asset
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-windows-x86_64
           path: release-assets\bitrixtext_forge-windows-x86_64.exe
