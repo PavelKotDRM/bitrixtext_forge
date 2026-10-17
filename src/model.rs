@@ -37,12 +37,31 @@ pub enum InlineNode {
     Italic(Vec<InlineNode>),
     Underline(Vec<InlineNode>),
     Strike(Vec<InlineNode>),
-    Link { text: Vec<InlineNode>, url: String },
-    User { id: String, text: Vec<InlineNode> },
-    Color { hex: String, content: Vec<InlineNode> },
-    Size { px: u8, content: Vec<InlineNode> },
-    Icon { url: String, params: String },
-    Image { url: String, alt: String, size: Option<ImageSize> },
+    Link {
+        text: Vec<InlineNode>,
+        url: String,
+    },
+    User {
+        id: String,
+        text: Vec<InlineNode>,
+    },
+    Color {
+        hex: String,
+        content: Vec<InlineNode>,
+    },
+    Size {
+        px: u8,
+        content: Vec<InlineNode>,
+    },
+    Icon {
+        url: String,
+        params: String,
+    },
+    Image {
+        url: String,
+        alt: String,
+        size: Option<ImageSize>,
+    },
     Code(String),
     SoftBreak,
     HardBreak,
@@ -58,12 +77,29 @@ pub enum TableAlignment {
 #[derive(Debug, Clone, PartialEq)]
 pub enum BlockNode {
     Paragraph(Vec<InlineNode>),
-    Heading { level: u8, content: Vec<InlineNode> },
+    Heading {
+        level: u8,
+        content: Vec<InlineNode>,
+    },
     Quote(Vec<BlockNode>),
-    CodeBlock { language: Option<String>, code: String },
-    List { ordered: bool, start: u64, items: Vec<Vec<BlockNode>> },
-    Table { rows: Vec<Vec<Vec<InlineNode>>>, alignments: Vec<TableAlignment> },
-    Image { url: String, alt: String, size: Option<ImageSize> },
+    CodeBlock {
+        language: Option<String>,
+        code: String,
+    },
+    List {
+        ordered: bool,
+        start: u64,
+        items: Vec<Vec<BlockNode>>,
+    },
+    Table {
+        rows: Vec<Vec<Vec<InlineNode>>>,
+        alignments: Vec<TableAlignment>,
+    },
+    Image {
+        url: String,
+        alt: String,
+        size: Option<ImageSize>,
+    },
     HorizontalRule,
 }
 

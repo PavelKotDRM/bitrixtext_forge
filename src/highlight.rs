@@ -34,9 +34,34 @@ fn keywords_for(lang: &str) -> &'static [&'static str] {
             "raise", "in", "not", "and", "or", "is", "None", "True", "False", "global", "del",
         ],
         "javascript" | "js" | "typescript" | "ts" => &[
-            "function", "const", "let", "var", "return", "if", "else", "for", "while", "class",
-            "extends", "import", "export", "from", "async", "await", "new", "this", "typeof",
-            "interface", "type", "enum", "null", "undefined", "true", "false", "switch", "case",
+            "function",
+            "const",
+            "let",
+            "var",
+            "return",
+            "if",
+            "else",
+            "for",
+            "while",
+            "class",
+            "extends",
+            "import",
+            "export",
+            "from",
+            "async",
+            "await",
+            "new",
+            "this",
+            "typeof",
+            "interface",
+            "type",
+            "enum",
+            "null",
+            "undefined",
+            "true",
+            "false",
+            "switch",
+            "case",
         ],
         "sql" => &[
             "SELECT", "FROM", "WHERE", "INSERT", "UPDATE", "DELETE", "JOIN", "LEFT", "RIGHT",
@@ -44,17 +69,89 @@ fn keywords_for(lang: &str) -> &'static [&'static str] {
             "select", "from", "where", "insert", "update", "delete", "join", "and", "or", "not",
         ],
         "php" => &[
-            "function", "class", "public", "private", "protected", "return", "if", "else",
-            "foreach", "for", "while", "echo", "new", "use", "namespace", "static", "try", "catch",
+            "function",
+            "class",
+            "public",
+            "private",
+            "protected",
+            "return",
+            "if",
+            "else",
+            "foreach",
+            "for",
+            "while",
+            "echo",
+            "new",
+            "use",
+            "namespace",
+            "static",
+            "try",
+            "catch",
         ],
         "csharp" | "c#" | "cs" => &[
-            "using", "namespace", "class", "interface", "struct", "enum", "public", "private",
-            "protected", "internal", "static", "readonly", "const", "void", "var", "new", "this",
-            "base", "return", "if", "else", "for", "foreach", "while", "do", "switch", "case",
-            "break", "continue", "try", "catch", "finally", "throw", "async", "await", "get",
-            "set", "override", "virtual", "abstract", "sealed", "partial", "string", "int",
-            "bool", "double", "float", "decimal", "long", "object", "null", "true", "false",
-            "in", "out", "ref", "params", "is", "as", "typeof", "default", "yield", "record",
+            "using",
+            "namespace",
+            "class",
+            "interface",
+            "struct",
+            "enum",
+            "public",
+            "private",
+            "protected",
+            "internal",
+            "static",
+            "readonly",
+            "const",
+            "void",
+            "var",
+            "new",
+            "this",
+            "base",
+            "return",
+            "if",
+            "else",
+            "for",
+            "foreach",
+            "while",
+            "do",
+            "switch",
+            "case",
+            "break",
+            "continue",
+            "try",
+            "catch",
+            "finally",
+            "throw",
+            "async",
+            "await",
+            "get",
+            "set",
+            "override",
+            "virtual",
+            "abstract",
+            "sealed",
+            "partial",
+            "string",
+            "int",
+            "bool",
+            "double",
+            "float",
+            "decimal",
+            "long",
+            "object",
+            "null",
+            "true",
+            "false",
+            "in",
+            "out",
+            "ref",
+            "params",
+            "is",
+            "as",
+            "typeof",
+            "default",
+            "yield",
+            "record",
         ],
         _ => &[
             "if", "else", "for", "while", "return", "function", "class", "def", "fn", "let",
@@ -85,7 +182,10 @@ pub fn highlight_line(lang: &str, line: &str) -> Vec<Token> {
             {
                 let mut head = highlight_segment(lang, before);
                 tokens.append(&mut head);
-                tokens.push(Token { text: line[pos..].to_string(), kind: TokenKind::Comment });
+                tokens.push(Token {
+                    text: line[pos..].to_string(),
+                    kind: TokenKind::Comment,
+                });
                 return tokens;
             }
         }
@@ -153,7 +253,10 @@ pub(crate) fn escape_bbcode_tags(source: &str, allowed_tags: &[&str]) -> (String
         let name_end = body.find('=').unwrap_or(body.len());
         let name = &body[..name_end];
         let valid_name = !name.is_empty()
-            && name.chars().next().is_some_and(|character| character.is_ascii_alphabetic())
+            && name
+                .chars()
+                .next()
+                .is_some_and(|character| character.is_ascii_alphabetic())
             && name.chars().all(|character| {
                 character.is_ascii_alphanumeric() || character == '_' || character == '-'
             });
@@ -202,7 +305,10 @@ fn highlight_segment(lang: &str, seg: &str) -> Vec<Token> {
 
     let flush_plain = |plain: &mut String, tokens: &mut Vec<Token>| {
         if !plain.is_empty() {
-            tokens.push(Token { text: std::mem::take(plain), kind: TokenKind::Plain });
+            tokens.push(Token {
+                text: std::mem::take(plain),
+                kind: TokenKind::Plain,
+            });
         }
     };
 
@@ -222,18 +328,32 @@ fn highlight_segment(lang: &str, seg: &str) -> Vec<Token> {
                 }
                 i += 1;
             }
-            tokens.push(Token { text: s, kind: TokenKind::String });
+            tokens.push(Token {
+                text: s,
+                kind: TokenKind::String,
+            });
             continue;
         }
         // числа
-        if c.is_ascii_digit() && !plain.chars().last().map(|p| p.is_alphanumeric() || p == '_').unwrap_or(false) {
+        if c.is_ascii_digit()
+            && !plain
+                .chars()
+                .last()
+                .map(|p| p.is_alphanumeric() || p == '_')
+                .unwrap_or(false)
+        {
             flush_plain(&mut plain, &mut tokens);
             let mut n = String::new();
-            while i < chars.len() && (chars[i].is_ascii_alphanumeric() || chars[i] == '.' || chars[i] == '_') {
+            while i < chars.len()
+                && (chars[i].is_ascii_alphanumeric() || chars[i] == '.' || chars[i] == '_')
+            {
                 n.push(chars[i]);
                 i += 1;
             }
-            tokens.push(Token { text: n, kind: TokenKind::Number });
+            tokens.push(Token {
+                text: n,
+                kind: TokenKind::Number,
+            });
             continue;
         }
         // идентификаторы / ключевые слова
@@ -244,7 +364,11 @@ fn highlight_segment(lang: &str, seg: &str) -> Vec<Token> {
                 w.push(chars[i]);
                 i += 1;
             }
-            let kind = if keywords.contains(&w.as_str()) { TokenKind::Keyword } else { TokenKind::Plain };
+            let kind = if keywords.contains(&w.as_str()) {
+                TokenKind::Keyword
+            } else {
+                TokenKind::Plain
+            };
             tokens.push(Token { text: w, kind });
             continue;
         }
@@ -260,31 +384,61 @@ mod tests {
     use super::*;
 
     fn kinds(lang: &str, line: &str) -> Vec<(String, TokenKind)> {
-        highlight_line(lang, line).into_iter().map(|t| (t.text, t.kind)).collect()
+        highlight_line(lang, line)
+            .into_iter()
+            .map(|t| (t.text, t.kind))
+            .collect()
     }
 
     #[test]
     fn rust_keywords_highlighted() {
         let toks = kinds("rust", "fn main() { let x = 1; }");
-        assert!(toks.iter().any(|(t, k)| t == "fn" && *k == TokenKind::Keyword));
-        assert!(toks.iter().any(|(t, k)| t == "let" && *k == TokenKind::Keyword));
-        assert!(toks.iter().any(|(t, k)| t == "1" && *k == TokenKind::Number));
+        assert!(
+            toks.iter()
+                .any(|(t, k)| t == "fn" && *k == TokenKind::Keyword)
+        );
+        assert!(
+            toks.iter()
+                .any(|(t, k)| t == "let" && *k == TokenKind::Keyword)
+        );
+        assert!(
+            toks.iter()
+                .any(|(t, k)| t == "1" && *k == TokenKind::Number)
+        );
     }
 
     #[test]
     fn strings_highlighted() {
         let toks = kinds("python", "print(\"hello\")");
-        assert!(toks.iter().any(|(t, k)| t == "\"hello\"" && *k == TokenKind::String));
+        assert!(
+            toks.iter()
+                .any(|(t, k)| t == "\"hello\"" && *k == TokenKind::String)
+        );
     }
 
     #[test]
     fn csharp_keywords_highlighted() {
         let toks = kinds("csharp", "public class Foo { private readonly int x = 1; }");
-        assert!(toks.iter().any(|(t, k)| t == "public" && *k == TokenKind::Keyword));
-        assert!(toks.iter().any(|(t, k)| t == "class" && *k == TokenKind::Keyword));
-        assert!(toks.iter().any(|(t, k)| t == "private" && *k == TokenKind::Keyword));
-        assert!(toks.iter().any(|(t, k)| t == "readonly" && *k == TokenKind::Keyword));
-        assert!(toks.iter().any(|(t, k)| t == "int" && *k == TokenKind::Keyword));
+        assert!(
+            toks.iter()
+                .any(|(t, k)| t == "public" && *k == TokenKind::Keyword)
+        );
+        assert!(
+            toks.iter()
+                .any(|(t, k)| t == "class" && *k == TokenKind::Keyword)
+        );
+        assert!(
+            toks.iter()
+                .any(|(t, k)| t == "private" && *k == TokenKind::Keyword)
+        );
+        assert!(
+            toks.iter()
+                .any(|(t, k)| t == "readonly" && *k == TokenKind::Keyword)
+        );
+        assert!(
+            toks.iter()
+                .any(|(t, k)| t == "int" && *k == TokenKind::Keyword)
+        );
     }
 
     #[test]
@@ -292,7 +446,8 @@ mod tests {
         for lang in ["csharp", "c#", "cs", "CSharp", "C#"] {
             let toks = kinds(lang, "namespace App { }");
             assert!(
-                toks.iter().any(|(t, k)| t == "namespace" && *k == TokenKind::Keyword),
+                toks.iter()
+                    .any(|(t, k)| t == "namespace" && *k == TokenKind::Keyword),
                 "namespace should be a keyword for lang={lang}"
             );
         }
@@ -301,9 +456,10 @@ mod tests {
     #[test]
     fn comments_highlighted() {
         let toks = kinds("rust", "let a = 1; // комментарий");
-        assert!(toks
-            .iter()
-            .any(|(t, k)| t.contains("комментарий") && *k == TokenKind::Comment));
+        assert!(
+            toks.iter()
+                .any(|(t, k)| t.contains("комментарий") && *k == TokenKind::Comment)
+        );
     }
 
     #[test]
@@ -315,7 +471,10 @@ mod tests {
     #[test]
     fn unknown_language_still_tokenizes() {
         let toks = kinds("brainfuck", "if x return 5");
-        assert!(toks.iter().any(|(t, k)| t == "if" && *k == TokenKind::Keyword));
+        assert!(
+            toks.iter()
+                .any(|(t, k)| t == "if" && *k == TokenKind::Keyword)
+        );
     }
 
     #[test]
@@ -330,7 +489,10 @@ mod tests {
     fn bbcode_highlight_prefixes_each_line_with_quote_and_indent() {
         let out = highlight_code_to_bbcode("rust", "let a = 1;\nlet b = 2;");
         for line in out.lines() {
-            assert!(line.starts_with(">>    "), "строка без >> и отступа: {line:?}");
+            assert!(
+                line.starts_with(">>    "),
+                "строка без >> и отступа: {line:?}"
+            );
         }
     }
 

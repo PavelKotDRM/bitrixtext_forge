@@ -21,7 +21,10 @@ fn trailing_tab_after_closing_fence_still_closes_the_code_block() {
     let doc = parse_markdown(md).document;
     match &doc.blocks[1] {
         BlockNode::CodeBlock { code, .. } => {
-            assert_eq!(code, "# h1 Heading 8-)\nAlt-H2\n------", "закрывающий фенс не распознан: {doc:#?}");
+            assert_eq!(
+                code, "# h1 Heading 8-)\nAlt-H2\n------",
+                "закрывающий фенс не распознан: {doc:#?}"
+            );
         }
         other => panic!("ожидался CodeBlock, получено {other:?}"),
     }
@@ -36,12 +39,18 @@ fn tab_indented_closing_fence_still_closes_the_code_block() {
     let doc = parse_markdown(md).document;
     match &doc.blocks[1] {
         BlockNode::CodeBlock { code, .. } => {
-            assert_eq!(code, "# h1 Heading 8-)\nAlt-H2\n------", "закрывающий фенс не распознан: {doc:#?}");
+            assert_eq!(
+                code, "# h1 Heading 8-)\nAlt-H2\n------",
+                "закрывающий фенс не распознан: {doc:#?}"
+            );
         }
         other => panic!("ожидался CodeBlock, получено {other:?}"),
     }
     let out = convert(md, ProfileKind::Full);
-    assert_eq!(out, "[size=30][b]Headers[/b][/size]\n\n[code]\n# h1 Heading 8-)\nAlt-H2\n------\n[/code]");
+    assert_eq!(
+        out,
+        "[size=30][b]Headers[/b][/size]\n\n[code]\n# h1 Heading 8-)\nAlt-H2\n------\n[/code]"
+    );
 }
 
 #[test]
@@ -62,17 +71,32 @@ fn code_block_with_markdown_headings_inside_is_always_closed() {
     // а [code] должен закрываться независимо от содержимого.
     let md = "# Headers\n\n```\n# h1 Heading 8-)\n## h2 Heading\n### h3 Heading\n#### h4 Heading\n##### h5 Heading\n###### h6 Heading\n\nAlternatively, for H1 and H2, an underline-ish style:\n\nAlt-H1\n======\n\nAlt-H2\n------\n```";
     let out = convert(md, ProfileKind::Full);
-    assert!(out.starts_with("[size=30][b]Headers[/b][/size]\n\n[code]\n"), "заголовок вне кода не сохранён: {out}");
-    assert!(out.trim_end().ends_with("[/code]"), "код должен закрываться [/code]: {out}");
-    assert!(out.contains("# h1 Heading 8-)"), "содержимое фенса должно остаться литеральным текстом: {out}");
-    assert!(!out.contains("[b]h1"), "заголовки внутри code fence не должны парситься: {out}");
+    assert!(
+        out.starts_with("[size=30][b]Headers[/b][/size]\n\n[code]\n"),
+        "заголовок вне кода не сохранён: {out}"
+    );
+    assert!(
+        out.trim_end().ends_with("[/code]"),
+        "код должен закрываться [/code]: {out}"
+    );
+    assert!(
+        out.contains("# h1 Heading 8-)"),
+        "содержимое фенса должно остаться литеральным текстом: {out}"
+    );
+    assert!(
+        !out.contains("[b]h1"),
+        "заголовки внутри code fence не должны парситься: {out}"
+    );
 }
 
 #[test]
 fn code_block_with_crlf_line_endings_is_always_closed() {
     let md = "# Headers\r\n\r\n```\r\n# h1 Heading 8-)\r\nAlt-H2\r\n------\r\n```\r\n";
     let out = convert(md, ProfileKind::Full);
-    assert!(out.trim_end().ends_with("[/code]"), "код должен закрываться [/code] даже с CRLF: {out}");
+    assert!(
+        out.trim_end().ends_with("[/code]"),
+        "код должен закрываться [/code] даже с CRLF: {out}"
+    );
 }
 
 #[test]
@@ -117,7 +141,10 @@ fn safe_profile_has_no_extended_tags() {
     let md = "# T\n\n[color=#f00]x[/color] [size=20]y[/size]\n\n![i](https://e.com/i.png)\n\n[icon=https://e.com/ic.png]";
     let out = convert(md, ProfileKind::CoreSafe);
     for tag in ["[color", "[size", "[img", "[code", "[icon"] {
-        assert!(!out.contains(tag), "safe profile must not contain {tag}: {out}");
+        assert!(
+            !out.contains(tag),
+            "safe profile must not contain {tag}: {out}"
+        );
     }
 }
 
@@ -125,7 +152,10 @@ fn safe_profile_has_no_extended_tags() {
 fn plain_profile_has_no_bbcode_at_all() {
     let md = "# T\n\n**b** [u]u[/u] [ссылка](https://e.com)\n\n```\ncode\n```";
     let out = convert(md, ProfileKind::PlainText);
-    assert!(!out.contains('['), "plain text must not contain BBCode: {out}");
+    assert!(
+        !out.contains('['),
+        "plain text must not contain BBCode: {out}"
+    );
 }
 
 #[test]
@@ -170,16 +200,35 @@ fn unicode_mixed_languages() {
 #[test]
 fn code_fallback_never_generates_code_tag() {
     let doc = parse_markdown("```python\ndef f():\n    return 'hi'\n```").document;
-    let res = render(&doc, ProfileKind::ManualCodeHighlight, &RenderOptions::default());
-    assert!(!res.output.contains("[code]"), "не должно быть [code]: {}", res.output);
-    assert!(res.output.lines().all(|l| l.starts_with(">>")), "код должен быть выделен >>: {}", res.output);
-    assert!(res.output.contains("[color=#c678dd]def[/color]"), "ключевые слова должны подсвечиваться: {}", res.output);
+    let res = render(
+        &doc,
+        ProfileKind::ManualCodeHighlight,
+        &RenderOptions::default(),
+    );
+    assert!(
+        !res.output.contains("[code]"),
+        "не должно быть [code]: {}",
+        res.output
+    );
+    assert!(
+        res.output.lines().all(|l| l.starts_with(">>")),
+        "код должен быть выделен >>: {}",
+        res.output
+    );
+    assert!(
+        res.output.contains("[color=#c678dd]def[/color]"),
+        "ключевые слова должны подсвечиваться: {}",
+        res.output
+    );
 }
 
 #[test]
 fn disabled_manual_highlight_still_uses_text_fallback() {
     let doc = parse_markdown("```python\nprint('hi')\n```").document;
-    let opts = RenderOptions { manual_code_colors: false, ..Default::default() };
+    let opts = RenderOptions {
+        manual_code_colors: false,
+        ..Default::default()
+    };
     let res = render(&doc, ProfileKind::ManualCodeHighlight, &opts);
     assert_eq!(res.output, ">>    print('hi')");
     assert!(!res.output.contains("[code]"));
@@ -190,10 +239,28 @@ fn disabled_manual_highlight_still_uses_text_fallback() {
 fn markdown_conversion_generates_only_allowed_tags() {
     let md = "# H\n\n**b** *i* ~~s~~ [text](https://e.com)\n\n![image](https://e.com/i.png)\n\n```\nlet x = 1;\n```";
     let out = convert(md, ProfileKind::Full);
-    assert!(out.contains("[code]") && out.contains("[/code]"), "[code] should be generated by Full profile: {out}");
-    assert!(out.contains("[size=30]"), "H1 should use the configured heading size: {out}");
-    for tag in ["[img", "[timestamp", "[disk", "[br", "[list", "[hr", "[color", "[icon"] {
-        assert!(!out.contains(tag), "unsupported tag was generated: {tag}: {out}");
+    assert!(
+        out.contains("[code]") && out.contains("[/code]"),
+        "[code] should be generated by Full profile: {out}"
+    );
+    assert!(
+        out.contains("[size=30]"),
+        "H1 should use the configured heading size: {out}"
+    );
+    for tag in [
+        "[img",
+        "[timestamp",
+        "[disk",
+        "[br",
+        "[list",
+        "[hr",
+        "[color",
+        "[icon",
+    ] {
+        assert!(
+            !out.contains(tag),
+            "unsupported tag was generated: {tag}: {out}"
+        );
     }
 }
 
@@ -259,19 +326,44 @@ fn tables_use_supported_bbcode_only() {
     let doc = parse_markdown(md).document;
     let res = render(&doc, ProfileKind::Full, &RenderOptions::default());
     let out = res.output;
-    assert!(out.contains("table_1.xlsx"), "table filename reference is missing: {out}");
+    assert!(
+        out.contains("table_1.xlsx"),
+        "table filename reference is missing: {out}"
+    );
     for tag in ["[table]", "[tr]", "[td]", "[list]", "[hr]"] {
-        assert!(!out.contains(tag), "unsupported BBCode tag leaked into output: {tag}: {out}");
+        assert!(
+            !out.contains(tag),
+            "unsupported BBCode tag leaked into output: {tag}: {out}"
+        );
     }
-    assert_eq!(res.tables.len(), 1, "table data should be extracted for xlsx export");
+    assert_eq!(
+        res.tables.len(),
+        1,
+        "table data should be extracted for xlsx export"
+    );
     let table = &res.tables[0];
-    assert!(table.rows.iter().flatten().any(|cell| cell.contains("Иван и Пётр")));
-    assert!(table.rows.iter().flatten().any(|cell| cell.contains("Готово")));
+    assert!(
+        table
+            .rows
+            .iter()
+            .flatten()
+            .any(|cell| cell.contains("Иван и Пётр"))
+    );
+    assert!(
+        table
+            .rows
+            .iter()
+            .flatten()
+            .any(|cell| cell.contains("Готово"))
+    );
 
     let core_safe_out = convert(md, ProfileKind::CoreSafe);
     assert!(core_safe_out.contains("table_1.xlsx"));
     for tag in ["[b]", "[i]", "[u]", "[s]", "[url]", "[url=", "[user="] {
-        assert!(!core_safe_out.contains(tag), "BBCode formatting was generated in a Core Safe table: {tag}: {core_safe_out}");
+        assert!(
+            !core_safe_out.contains(tag),
+            "BBCode formatting was generated in a Core Safe table: {tag}: {core_safe_out}"
+        );
     }
 }
 

@@ -16,7 +16,7 @@ path = "src/main.rs"
 anyhow = "1"
 arboard = "3"
 directories = "6"
-egui = "0.36"
+egui = "0.37"
 fontdb = "0.24"
 pulldown-cmark = "0.13"
 rfd = "0.17"
@@ -26,7 +26,7 @@ serde_json = "1"
 thiserror = "2"
 
 [target.'cfg(windows)'.dependencies]
-eframe = { version = "0.36", default-features = false, features = [
+eframe = { version = "0.37", default-features = false, features = [
     "accesskit",
     "default_fonts",
     "glow",
@@ -34,7 +34,7 @@ eframe = { version = "0.36", default-features = false, features = [
 ] }
 
 [target.'cfg(not(windows))'.dependencies]
-eframe = { version = "0.36", default-features = false, features = [
+eframe = { version = "0.37", default-features = false, features = [
     "accesskit",
     "default_fonts",
     "glow",

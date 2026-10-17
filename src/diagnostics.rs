@@ -26,14 +26,23 @@ pub struct Diagnostic {
 
 impl Diagnostic {
     pub fn info(msg: impl Into<String>) -> Self {
-        Self { severity: Severity::Info, message: msg.into() }
+        Self {
+            severity: Severity::Info,
+            message: msg.into(),
+        }
     }
     pub fn warn(msg: impl Into<String>) -> Self {
-        Self { severity: Severity::Warning, message: msg.into() }
+        Self {
+            severity: Severity::Warning,
+            message: msg.into(),
+        }
     }
     #[allow(dead_code)]
     pub fn error(msg: impl Into<String>) -> Self {
-        Self { severity: Severity::Error, message: msg.into() }
+        Self {
+            severity: Severity::Error,
+            message: msg.into(),
+        }
     }
 }
 
