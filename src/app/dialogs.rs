@@ -112,7 +112,9 @@ impl InsertDialog {
                                 );
                             }
                             ui.label("HEX:");
-                            ui.add(egui::TextEdit::singleline(&mut self.color_hex).desired_width(90.0));
+                            ui.add(
+                                egui::TextEdit::singleline(&mut self.color_hex).desired_width(90.0),
+                            );
                         });
                         ui.horizontal_wrapped(|ui| {
                             ui.label("Пресеты:");
@@ -128,7 +130,9 @@ impl InsertDialog {
                         ui.text_edit_singleline(&mut self.url);
                         ui.horizontal(|ui| {
                             ui.label("size (необяз.):");
-                            ui.add(egui::TextEdit::singleline(&mut self.icon_size).desired_width(60.0));
+                            ui.add(
+                                egui::TextEdit::singleline(&mut self.icon_size).desired_width(60.0),
+                            );
                             ui.label("title (необяз.):");
                             ui.text_edit_singleline(&mut self.icon_title);
                         });
@@ -161,7 +165,11 @@ impl InsertDialog {
     fn build_snippet(&self) -> Result<String, String> {
         match self.kind {
             DialogKind::Underline => {
-                let t = if self.text.is_empty() { "текст" } else { &self.text };
+                let t = if self.text.is_empty() {
+                    "текст"
+                } else {
+                    &self.text
+                };
                 Ok(format!("[u]{t}[/u]"))
             }
             DialogKind::User => {
@@ -169,20 +177,32 @@ impl InsertDialog {
                 if id.is_empty() {
                     return Err("Укажите ID сотрудника.".into());
                 }
-                let text = if self.text.is_empty() { "Сотрудник" } else { &self.text };
+                let text = if self.text.is_empty() {
+                    "Сотрудник"
+                } else {
+                    &self.text
+                };
                 Ok(format!("[user={id}]{text}[/user]"))
             }
             DialogKind::Size => {
                 if !is_valid_size(self.size_px) {
                     return Err("Размер должен быть в диапазоне 8–30.".into());
                 }
-                let t = if self.text.is_empty() { "текст" } else { &self.text };
+                let t = if self.text.is_empty() {
+                    "текст"
+                } else {
+                    &self.text
+                };
                 Ok(format!("[size={}]{t}[/size]", self.size_px))
             }
             DialogKind::Color => {
                 let hex = normalize_hex_color(&self.color_hex)
                     .ok_or("Некорректный HEX: требуется 3 или 6 hex-символов.")?;
-                let t = if self.text.is_empty() { "текст" } else { &self.text };
+                let t = if self.text.is_empty() {
+                    "текст"
+                } else {
+                    &self.text
+                };
                 Ok(format!("[color={hex}]{t}[/color]"))
             }
             DialogKind::Icon => {
@@ -419,52 +439,54 @@ pub fn show_templates_window(
                 ui.text_edit_singleline(&mut ui_state.filter);
             });
             ui.separator();
-            egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
-                let filter = ui_state.filter.to_lowercase();
-                ui.strong("Системные");
-                for t in builtin {
-                    if !filter.is_empty()
-                        && !t.name.to_lowercase().contains(&filter)
-                        && !t.category.to_lowercase().contains(&filter)
-                    {
-                        continue;
+            egui::ScrollArea::vertical()
+                .max_height(360.0)
+                .show(ui, |ui| {
+                    let filter = ui_state.filter.to_lowercase();
+                    ui.strong("Системные");
+                    for t in builtin {
+                        if !filter.is_empty()
+                            && !t.name.to_lowercase().contains(&filter)
+                            && !t.category.to_lowercase().contains(&filter)
+                        {
+                            continue;
+                        }
+                        ui.horizontal(|ui| {
+                            if ui.button("Вставить").clicked() {
+                                event = TemplateEvent::Insert(t.markdown.clone());
+                            }
+                            ui.label(format!("{} · {}", t.name, t.category));
+                            if !t.variables.is_empty() {
+                                ui.weak(format!("переменные: {}", t.variables.join(", ")));
+                            }
+                        });
                     }
-                    ui.horizontal(|ui| {
-                        if ui.button("Вставить").clicked() {
-                            event = TemplateEvent::Insert(t.markdown.clone());
-                        }
-                        ui.label(format!("{} · {}", t.name, t.category));
-                        if !t.variables.is_empty() {
-                            ui.weak(format!("переменные: {}", t.variables.join(", ")));
-                        }
-                    });
-                }
-                ui.separator();
-                ui.strong("Пользовательские");
-                if user.is_empty() {
-                    ui.weak("Нет пользовательских шаблонов.");
-                }
-                for (i, t) in user.iter().enumerate() {
-                    if !filter.is_empty()
-                        && !t.name.to_lowercase().contains(&filter)
-                        && !t.category.to_lowercase().contains(&filter)
-                    {
-                        continue;
+                    ui.separator();
+                    ui.strong("Пользовательские");
+                    if user.is_empty() {
+                        ui.weak("Нет пользовательских шаблонов.");
                     }
-                    ui.horizontal(|ui| {
-                        if ui.button("Вставить").clicked() {
-                            event = TemplateEvent::Insert(t.markdown.clone());
+                    for (i, t) in user.iter().enumerate() {
+                        if !filter.is_empty()
+                            && !t.name.to_lowercase().contains(&filter)
+                            && !t.category.to_lowercase().contains(&filter)
+                        {
+                            continue;
                         }
-                        if ui.button("🗑").on_hover_text("Удалить").clicked() {
-                            event = TemplateEvent::DeleteUser(i);
-                        }
-                        ui.label(format!("{} · {}", t.name, t.category));
-                        if !t.modified.is_empty() {
-                            ui.weak(&t.modified);
-                        }
-                    });
-                }
-            });
+                        ui.horizontal(|ui| {
+                            if ui.button("Вставить").clicked() {
+                                event = TemplateEvent::Insert(t.markdown.clone());
+                            }
+                            if ui.button("🗑").on_hover_text("Удалить").clicked() {
+                                event = TemplateEvent::DeleteUser(i);
+                            }
+                            ui.label(format!("{} · {}", t.name, t.category));
+                            if !t.modified.is_empty() {
+                                ui.weak(&t.modified);
+                            }
+                        });
+                    }
+                });
             ui.separator();
             ui.strong("Сохранить текущий документ как шаблон");
             ui.horizontal(|ui| {
@@ -472,7 +494,8 @@ pub fn show_templates_window(
                 ui.text_edit_singleline(&mut ui_state.new_name);
                 ui.label("Категория:");
                 ui.text_edit_singleline(&mut ui_state.new_category);
-                if ui.button("Сохранить").clicked() && !ui_state.new_name.trim().is_empty() {
+                if ui.button("Сохранить").clicked() && !ui_state.new_name.trim().is_empty()
+                {
                     event = TemplateEvent::SaveCurrent {
                         name: ui_state.new_name.trim().to_string(),
                         category: if ui_state.new_category.trim().is_empty() {

@@ -20,9 +20,7 @@ pub(super) fn flatten_images_in_link_label(nodes: &[InlineNode]) -> Vec<InlineNo
     nodes
         .iter()
         .map(|node| match node {
-            InlineNode::Bold(children) => {
-                InlineNode::Bold(flatten_images_in_link_label(children))
-            }
+            InlineNode::Bold(children) => InlineNode::Bold(flatten_images_in_link_label(children)),
             InlineNode::Italic(children) => {
                 InlineNode::Italic(flatten_images_in_link_label(children))
             }

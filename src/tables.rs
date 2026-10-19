@@ -63,7 +63,11 @@ pub fn write_table_xlsx(table: &ExtractedTable, path: &Path) -> anyhow::Result<(
         let is_header = row_index == 0;
         for (col_index, cell) in row.iter().enumerate() {
             let alignment = table.alignments.get(col_index);
-            let format = if is_header { header_format(alignment) } else { body_format(alignment) };
+            let format = if is_header {
+                header_format(alignment)
+            } else {
+                body_format(alignment)
+            };
             sheet.write_with_format(row_index as u32, col_index as u16, cell.as_str(), &format)?;
         }
     }
@@ -100,14 +104,22 @@ mod tests {
             ],
             alignments: vec![TableAlignment::Left, TableAlignment::Center],
         };
-        let dir = std::env::temp_dir().join(format!("bitrixtext_forge_test_{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("bitrixtext_forge_test_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("table_1.xlsx");
         write_table_xlsx(&table, &path).expect("xlsx should be written");
         let bytes = std::fs::read(&path).expect("file should exist");
         // .xlsx is a ZIP container: must start with the local file header signature.
-        assert_eq!(&bytes[0..2], b"PK", "output is not a valid xlsx/zip container");
-        assert!(bytes.len() > 100, "xlsx file looks too small to contain formatting");
+        assert_eq!(
+            &bytes[0..2],
+            b"PK",
+            "output is not a valid xlsx/zip container"
+        );
+        assert!(
+            bytes.len() > 100,
+            "xlsx file looks too small to contain formatting"
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 }

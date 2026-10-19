@@ -14,13 +14,23 @@ use crate::tables::{ExtractedTable, table_file_name};
 
 use super::{RenderResult, flatten_images_in_link_label};
 
-const FULL_ALLOWED_TAGS: &[&str] =
-    &["b", "i", "u", "s", "url", "user", "color", "size", "icon", "code"];
+const FULL_ALLOWED_TAGS: &[&str] = &[
+    "b", "i", "u", "s", "url", "user", "color", "size", "icon", "code",
+];
 
 pub fn render(doc: &Document, opts: &RenderOptions, manual_code: bool) -> RenderResult {
-    let mut r = FullRenderer { opts, manual_code, diags: Diagnostics::default(), tables: Vec::new() };
+    let mut r = FullRenderer {
+        opts,
+        manual_code,
+        diags: Diagnostics::default(),
+        tables: Vec::new(),
+    };
     let output = r.render_blocks(&doc.blocks, 0);
-    RenderResult { output, diagnostics: r.diags, tables: r.tables }
+    RenderResult {
+        output,
+        diagnostics: r.diags,
+        tables: r.tables,
+    }
 }
 
 struct FullRenderer<'a> {
@@ -41,8 +51,11 @@ impl FullRenderer<'_> {
     }
 
     fn render_blocks(&mut self, blocks: &[BlockNode], depth: usize) -> String {
-        let parts: Vec<String> =
-            blocks.iter().map(|b| self.render_block(b, depth)).filter(|s| !s.is_empty()).collect();
+        let parts: Vec<String> = blocks
+            .iter()
+            .map(|b| self.render_block(b, depth))
+            .filter(|s| !s.is_empty())
+            .collect();
         parts.join(&self.block_sep())
     }
 
@@ -51,10 +64,14 @@ impl FullRenderer<'_> {
             BlockNode::Paragraph(inlines) => self.render_inlines(inlines),
             BlockNode::Heading { level, content } => self.render_heading(*level, content),
             BlockNode::Quote(blocks) => self.render_quote(blocks),
-            BlockNode::CodeBlock { language, code } => self.render_code_block(language.as_deref(), code),
-            BlockNode::List { ordered, start, items } => {
-                self.render_list(*ordered, *start, items, depth)
+            BlockNode::CodeBlock { language, code } => {
+                self.render_code_block(language.as_deref(), code)
             }
+            BlockNode::List {
+                ordered,
+                start,
+                items,
+            } => self.render_list(*ordered, *start, items, depth),
             BlockNode::Table { rows, alignments } => self.render_table(rows, alignments),
             BlockNode::Image { url, alt, .. } => self.render_image_link(url, alt),
             BlockNode::HorizontalRule => self.opts.hr_text.clone(),
@@ -65,7 +82,12 @@ impl FullRenderer<'_> {
     /// (`opts.heading_sizes`); `0` (по умолчанию для H4-H6) означает только жирный текст.
     fn render_heading(&mut self, level: u8, content: &[InlineNode]) -> String {
         let text = self.render_inlines(content);
-        let size = self.opts.heading_sizes.get(level.saturating_sub(1) as usize).copied().unwrap_or(0);
+        let size = self
+            .opts
+            .heading_sizes
+            .get(level.saturating_sub(1) as usize)
+            .copied()
+            .unwrap_or(0);
         if size > 0 {
             format!("[size={size}][b]{text}[/b][/size]")
         } else {
@@ -75,7 +97,10 @@ impl FullRenderer<'_> {
 
     fn render_quote(&mut self, blocks: &[BlockNode]) -> String {
         // внутри цитаты всегда реальные переносы, т.к. `>>` работает только в начале строки
-        let inner_opts = RenderOptions { line_break: LineBreakStyle::Newline, ..self.opts.clone() };
+        let inner_opts = RenderOptions {
+            line_break: LineBreakStyle::Newline,
+            ..self.opts.clone()
+        };
         let mut inner_renderer = FullRenderer {
             opts: &inner_opts,
             manual_code: self.manual_code,
@@ -157,7 +182,11 @@ impl FullRenderer<'_> {
                 if line_index > 0 && line.starts_with(&nested_indent) {
                     lines.push(line.to_string());
                 } else {
-                    let prefix = if line_index == 0 { marker.as_str() } else { "    " };
+                    let prefix = if line_index == 0 {
+                        marker.as_str()
+                    } else {
+                        "    "
+                    };
                     lines.push(format!("{indent}{prefix}{line}"));
                 }
             }
@@ -165,7 +194,11 @@ impl FullRenderer<'_> {
         lines.join(self.br())
     }
 
-    fn render_table(&mut self, rows: &[Vec<Vec<InlineNode>>], alignments: &[TableAlignment]) -> String {
+    fn render_table(
+        &mut self,
+        rows: &[Vec<Vec<InlineNode>>],
+        alignments: &[TableAlignment],
+    ) -> String {
         let name = table_file_name(self.tables.len());
         self.diags.push(Diagnostic::info(format!(
             "Таблица Markdown подготовлена для отдельного файла Excel «{name}»: \
@@ -173,9 +206,16 @@ impl FullRenderer<'_> {
         )));
         let rendered_rows = rows
             .iter()
-            .map(|row| row.iter().map(|cell| plain_text_of(cell).replace(['\n', '\r'], " ")).collect())
+            .map(|row| {
+                row.iter()
+                    .map(|cell| plain_text_of(cell).replace(['\n', '\r'], " "))
+                    .collect()
+            })
             .collect();
-        self.tables.push(ExtractedTable { rows: rendered_rows, alignments: alignments.to_vec() });
+        self.tables.push(ExtractedTable {
+            rows: rendered_rows,
+            alignments: alignments.to_vec(),
+        });
         format!("[b]Таблица:[/b] {name}")
     }
 
@@ -184,7 +224,11 @@ impl FullRenderer<'_> {
         let mut lines = Vec::new();
         for b in blocks {
             match b {
-                BlockNode::List { ordered, start, items } => {
+                BlockNode::List {
+                    ordered,
+                    start,
+                    items,
+                } => {
                     lines.extend(
                         self.render_list(*ordered, *start, items, depth + 1)
                             .split(self.br())
@@ -377,13 +421,19 @@ mod tests {
 
     #[test]
     fn quote_style_full_block_wraps_the_quote() {
-        let opts = RenderOptions { quote_style: QuoteStyle::FullBlock, ..Default::default() };
+        let opts = RenderOptions {
+            quote_style: QuoteStyle::FullBlock,
+            ..Default::default()
+        };
         assert_eq!(render_md_opts("> цитата", &opts), "------\nцитата\n------");
     }
 
     #[test]
     fn code_block() {
-        assert_eq!(render_md("```\nlet x = 1;\n```"), "[code]\nlet x = 1;\n[/code]");
+        assert_eq!(
+            render_md("```\nlet x = 1;\n```"),
+            "[code]\nlet x = 1;\n[/code]"
+        );
     }
 
     #[test]
@@ -399,7 +449,12 @@ mod tests {
         let doc = parse_markdown("```rust\nfn f() {}\n```").document;
         let res = render(&doc, &RenderOptions::default(), false);
         assert_eq!(res.output, "[code]\nfn f() {}\n[/code]");
-        assert!(res.diagnostics.items.iter().any(|d| d.message.contains("не подсвечивает синтаксис")));
+        assert!(
+            res.diagnostics
+                .items
+                .iter()
+                .any(|d| d.message.contains("не подсвечивает синтаксис"))
+        );
     }
 
     #[test]
@@ -407,7 +462,11 @@ mod tests {
         let doc = parse_markdown("```csharp\npublic class Foo {}\n```").document;
         let res = render(&doc, &RenderOptions::default(), true);
         assert!(!res.output.contains("[code]"));
-        assert!(res.output.lines().all(|l| l.starts_with(">>")), "код без >>: {}", res.output);
+        assert!(
+            res.output.lines().all(|l| l.starts_with(">>")),
+            "код без >>: {}",
+            res.output
+        );
         assert!(res.output.contains("[color=#c678dd]public[/color]"));
         assert!(res.output.contains("[color=#c678dd]class[/color]"));
     }
@@ -415,7 +474,10 @@ mod tests {
     #[test]
     fn manual_code_highlight_without_colors_still_uses_quote_prefix() {
         let doc = parse_markdown("```csharp\npublic class Foo {}\n```").document;
-        let opts = RenderOptions { manual_code_colors: false, ..Default::default() };
+        let opts = RenderOptions {
+            manual_code_colors: false,
+            ..Default::default()
+        };
         let res = render(&doc, &opts, true);
         assert!(!res.output.contains("[color="));
         assert_eq!(res.output, ">>    public class Foo {}");
@@ -453,7 +515,10 @@ mod tests {
             render_md("[color=#F00]красный[/color]"),
             "[color=#f00]красный[/color]"
         );
-        assert_eq!(render_md("[size=20]большой[/size]"), "[size=20]большой[/size]");
+        assert_eq!(
+            render_md("[size=20]большой[/size]"),
+            "[size=20]большой[/size]"
+        );
     }
 
     #[test]
@@ -469,7 +534,10 @@ mod tests {
     #[test]
     fn unordered_list_uses_text_markers() {
         assert_eq!(render_md("- a\n- b"), "• a\n• b");
-        let opts = RenderOptions { bullet_marker: BulletMarker::Dash, ..Default::default() };
+        let opts = RenderOptions {
+            bullet_marker: BulletMarker::Dash,
+            ..Default::default()
+        };
         assert_eq!(render_md_opts("- a\n- b", &opts), "- a\n- b");
     }
 
@@ -491,7 +559,10 @@ mod tests {
 
     #[test]
     fn user_render() {
-        assert_eq!(render_md("[user=111]Иван Иванов[/user]"), "[user=111]Иван Иванов[/user]");
+        assert_eq!(
+            render_md("[user=111]Иван Иванов[/user]"),
+            "[user=111]Иван Иванов[/user]"
+        );
     }
 
     #[test]
@@ -515,7 +586,9 @@ mod tests {
 
         assert!(result.output.contains("［b］literal［/b］"));
         assert!(result.diagnostics.items.iter().any(|diagnostic| {
-            diagnostic.message.contains("экранированы полноширинными скобками")
+            diagnostic
+                .message
+                .contains("экранированы полноширинными скобками")
         }));
     }
 }

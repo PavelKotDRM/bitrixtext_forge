@@ -8,9 +8,17 @@ use crate::tables::{ExtractedTable, table_file_name};
 use super::RenderResult;
 
 pub fn render(doc: &Document, opts: &RenderOptions) -> RenderResult {
-    let mut r = PlainRenderer { opts, diags: Diagnostics::default(), tables: Vec::new() };
+    let mut r = PlainRenderer {
+        opts,
+        diags: Diagnostics::default(),
+        tables: Vec::new(),
+    };
     let output = r.render_blocks(&doc.blocks, 0);
-    RenderResult { output, diagnostics: r.diags, tables: r.tables }
+    RenderResult {
+        output,
+        diagnostics: r.diags,
+        tables: r.tables,
+    }
 }
 
 struct PlainRenderer<'a> {
@@ -22,8 +30,11 @@ struct PlainRenderer<'a> {
 
 impl PlainRenderer<'_> {
     fn render_blocks(&mut self, blocks: &[BlockNode], depth: usize) -> String {
-        let parts: Vec<String> =
-            blocks.iter().map(|b| self.render_block(b, depth)).filter(|s| !s.is_empty()).collect();
+        let parts: Vec<String> = blocks
+            .iter()
+            .map(|b| self.render_block(b, depth))
+            .filter(|s| !s.is_empty())
+            .collect();
         parts.join("\n\n")
     }
 
@@ -33,12 +44,22 @@ impl PlainRenderer<'_> {
             BlockNode::Heading { content, .. } => self.render_inlines(content),
             BlockNode::Quote(blocks) => {
                 let inner = self.render_blocks(blocks, depth);
-                inner.lines().map(|l| format!("> {l}")).collect::<Vec<_>>().join("\n")
+                inner
+                    .lines()
+                    .map(|l| format!("> {l}"))
+                    .collect::<Vec<_>>()
+                    .join("\n")
             }
-            BlockNode::CodeBlock { code, .. } => {
-                code.lines().map(|l| format!("    {l}")).collect::<Vec<_>>().join("\n")
-            }
-            BlockNode::List { ordered, start, items } => {
+            BlockNode::CodeBlock { code, .. } => code
+                .lines()
+                .map(|l| format!("    {l}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            BlockNode::List {
+                ordered,
+                start,
+                items,
+            } => {
                 let indent = "    ".repeat(depth);
                 let nested_indent = "    ".repeat(depth + 1);
                 let mut lines = Vec::new();
@@ -67,7 +88,10 @@ impl PlainRenderer<'_> {
                     .iter()
                     .map(|row| row.iter().map(|cell| self.render_inlines(cell)).collect())
                     .collect();
-                self.tables.push(ExtractedTable { rows: rendered_rows, alignments: alignments.clone() });
+                self.tables.push(ExtractedTable {
+                    rows: rendered_rows,
+                    alignments: alignments.clone(),
+                });
                 format!("Таблица: {name}")
             }
             BlockNode::Image { url, alt, .. } => {
@@ -85,9 +109,17 @@ impl PlainRenderer<'_> {
         let mut lines = Vec::new();
         for block in blocks {
             match block {
-                BlockNode::List { ordered, start, items } => lines.extend(
+                BlockNode::List {
+                    ordered,
+                    start,
+                    items,
+                } => lines.extend(
                     self.render_block(
-                        &BlockNode::List { ordered: *ordered, start: *start, items: items.clone() },
+                        &BlockNode::List {
+                            ordered: *ordered,
+                            start: *start,
+                            items: items.clone(),
+                        },
                         depth + 1,
                     )
                     .lines()

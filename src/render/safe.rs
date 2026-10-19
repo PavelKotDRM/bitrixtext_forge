@@ -16,9 +16,17 @@ use super::{RenderResult, flatten_images_in_link_label};
 const CORE_SAFE_ALLOWED_TAGS: &[&str] = &["b", "i", "u", "s", "url"];
 
 pub fn render(doc: &Document, opts: &RenderOptions) -> RenderResult {
-    let mut r = SafeRenderer { opts, diags: Diagnostics::default(), tables: Vec::new() };
+    let mut r = SafeRenderer {
+        opts,
+        diags: Diagnostics::default(),
+        tables: Vec::new(),
+    };
     let output = r.render_blocks(&doc.blocks, 0);
-    RenderResult { output, diagnostics: r.diags, tables: r.tables }
+    RenderResult {
+        output,
+        diagnostics: r.diags,
+        tables: r.tables,
+    }
 }
 
 struct SafeRenderer<'a> {
@@ -37,8 +45,11 @@ impl SafeRenderer<'_> {
     }
 
     fn render_blocks(&mut self, blocks: &[BlockNode], depth: usize) -> String {
-        let parts: Vec<String> =
-            blocks.iter().map(|b| self.render_block(b, depth)).filter(|s| !s.is_empty()).collect();
+        let parts: Vec<String> = blocks
+            .iter()
+            .map(|b| self.render_block(b, depth))
+            .filter(|s| !s.is_empty())
+            .collect();
         parts.join(&self.block_sep())
     }
 
@@ -85,7 +96,11 @@ impl SafeRenderer<'_> {
                     output
                 }
             }
-            BlockNode::List { ordered, start, items } => {
+            BlockNode::List {
+                ordered,
+                start,
+                items,
+            } => {
                 let indent = "    ".repeat(depth);
                 let nested_indent = "    ".repeat(depth + 1);
                 let mut lines = Vec::new();
@@ -125,16 +140,26 @@ impl SafeRenderer<'_> {
         let mut lines = Vec::new();
         for block in blocks {
             match block {
-                BlockNode::List { ordered, start, items } => lines.extend(
+                BlockNode::List {
+                    ordered,
+                    start,
+                    items,
+                } => lines.extend(
                     self.render_block(
-                        &BlockNode::List { ordered: *ordered, start: *start, items: items.clone() },
+                        &BlockNode::List {
+                            ordered: *ordered,
+                            start: *start,
+                            items: items.clone(),
+                        },
                         depth + 1,
                     )
                     .split(self.br())
                     .map(str::to_string),
                 ),
                 other => lines.extend(
-                    self.render_block(other, depth).split(self.br()).map(str::to_string),
+                    self.render_block(other, depth)
+                        .split(self.br())
+                        .map(str::to_string),
                 ),
             }
         }
@@ -150,7 +175,11 @@ impl SafeRenderer<'_> {
         }
     }
 
-    fn render_table(&mut self, rows: &[Vec<Vec<InlineNode>>], alignments: &[TableAlignment]) -> String {
+    fn render_table(
+        &mut self,
+        rows: &[Vec<Vec<InlineNode>>],
+        alignments: &[TableAlignment],
+    ) -> String {
         let name = table_file_name(self.tables.len());
         self.warn_loss(&format!(
             "Таблица Markdown подготовлена для отдельного файла Excel «{name}»: \
@@ -160,7 +189,10 @@ impl SafeRenderer<'_> {
             .iter()
             .map(|row| row.iter().map(|cell| plain_text_of(cell)).collect())
             .collect();
-        self.tables.push(ExtractedTable { rows: rendered_rows, alignments: alignments.to_vec() });
+        self.tables.push(ExtractedTable {
+            rows: rendered_rows,
+            alignments: alignments.to_vec(),
+        });
         format!("Таблица: {name}")
     }
 
@@ -203,7 +235,9 @@ impl SafeRenderer<'_> {
                     }
                 }
                 InlineNode::User { text, .. } => {
-                    self.warn_loss("Тег [user] не входит в Core Safe Profile: упоминание заменено именем.");
+                    self.warn_loss(
+                        "Тег [user] не входит в Core Safe Profile: упоминание заменено именем.",
+                    );
                     out.push_str(&self.render_inlines_owned(text));
                 }
                 InlineNode::Color { content, .. } => {
@@ -266,17 +300,26 @@ mod tests {
 
     #[test]
     fn basic_formatting_allowed() {
-        assert_eq!(render_md("**b** *i* ~~s~~ [u]u[/u]"), "[b]b[/b] [i]i[/i] [s]s[/s] [u]u[/u]");
+        assert_eq!(
+            render_md("**b** *i* ~~s~~ [u]u[/u]"),
+            "[b]b[/b] [i]i[/i] [s]s[/s] [u]u[/u]"
+        );
     }
 
     #[test]
     fn links_allowed() {
-        assert_eq!(render_md("[t](https://e.com)"), "[url=https://e.com]t[/url]");
+        assert_eq!(
+            render_md("[t](https://e.com)"),
+            "[url=https://e.com]t[/url]"
+        );
     }
 
     #[test]
     fn color_and_size_stripped_with_warning() {
-        let res = render_md_res("[color=#f00]x[/color][size=20]y[/size]", &RenderOptions::default());
+        let res = render_md_res(
+            "[color=#f00]x[/color][size=20]y[/size]",
+            &RenderOptions::default(),
+        );
         assert_eq!(res.output, "xy");
         assert!(res.diagnostics.warnings() >= 2);
     }
@@ -288,7 +331,10 @@ mod tests {
 
     #[test]
     fn inline_code_is_not_rendered_as_a_code_block() {
-        let opts = RenderOptions { safe_allow_code: true, ..Default::default() };
+        let opts = RenderOptions {
+            safe_allow_code: true,
+            ..Default::default()
+        };
         assert_eq!(render_md_res("run `ls` now", &opts).output, "run ls now");
     }
 
@@ -301,7 +347,10 @@ mod tests {
 
     #[test]
     fn code_allowed_renders_as_code_tag_when_enabled() {
-        let opts = RenderOptions { safe_allow_code: true, ..Default::default() };
+        let opts = RenderOptions {
+            safe_allow_code: true,
+            ..Default::default()
+        };
         let res = render_md_res("```\nlet x = 1;\n```", &opts);
         assert_eq!(res.output, "[code]\nlet x = 1;\n[/code]");
     }

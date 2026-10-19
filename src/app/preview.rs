@@ -45,9 +45,21 @@ impl Fmt {
             font_id,
             color,
             italics: self.italics,
-            underline: if self.underline { Stroke::new(1.0, color) } else { Stroke::NONE },
-            strikethrough: if self.strike { Stroke::new(1.0, color) } else { Stroke::NONE },
-            background: if self.code { visuals.extreme_bg_color } else { Color32::TRANSPARENT },
+            underline: if self.underline {
+                Stroke::new(1.0, color)
+            } else {
+                Stroke::NONE
+            },
+            strikethrough: if self.strike {
+                Stroke::new(1.0, color)
+            } else {
+                Stroke::NONE
+            },
+            background: if self.code {
+                visuals.extreme_bg_color
+            } else {
+                Color32::TRANSPARENT
+            },
             ..Default::default()
         }
     }
@@ -141,7 +153,10 @@ fn opening_tag(tag: &str, fmt: Fmt) -> Option<(&'static str, Fmt)> {
         _ if lower.starts_with("size=") => next.size = tag[5..].trim().parse::<f32>().ok()?,
         _ => return None,
     }
-    let closing_tag = match lower.split_once('=').map_or(lower.as_str(), |(name, _)| name) {
+    let closing_tag = match lower
+        .split_once('=')
+        .map_or(lower.as_str(), |(name, _)| name)
+    {
         "b" => "b",
         "i" => "i",
         "u" => "u",
@@ -189,7 +204,10 @@ mod tests {
 
     #[test]
     fn matches_nested_identical_tags() {
-        assert_eq!(find_closing_tag("outer [b]inner[/b] tail[/b]", "b"), Some(23));
+        assert_eq!(
+            find_closing_tag("outer [b]inner[/b] tail[/b]", "b"),
+            Some(23)
+        );
     }
 
     #[test]
@@ -210,5 +228,4 @@ mod tests {
         });
         output.textures_delta.clear();
     }
-
 }

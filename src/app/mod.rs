@@ -14,7 +14,9 @@ use crate::profiles::ProfileKind;
 use crate::render;
 use crate::resources::{ExtractedImage, collect_images, export_resources as write_resources};
 use crate::settings::{AppSettings, Theme};
-use crate::storage::{RecentFiles, SessionState, Storage, export_json, read_document, write_document};
+use crate::storage::{
+    RecentFiles, SessionState, Storage, export_json, read_document, write_document,
+};
 use crate::tables::ExtractedTable;
 use crate::templates::{Template, builtin_templates};
 
@@ -54,9 +56,20 @@ fn install_unicode_fonts(ctx: &egui::Context) {
             continue;
         };
 
-        definitions.font_data.insert(font_name.clone(), egui::FontData::from_owned(font_data).into());
-        definitions.families.entry(egui::FontFamily::Proportional).or_default().push(font_name.clone());
-        definitions.families.entry(egui::FontFamily::Monospace).or_default().push(font_name);
+        definitions.font_data.insert(
+            font_name.clone(),
+            egui::FontData::from_owned(font_data).into(),
+        );
+        definitions
+            .families
+            .entry(egui::FontFamily::Proportional)
+            .or_default()
+            .push(font_name.clone());
+        definitions
+            .families
+            .entry(egui::FontFamily::Monospace)
+            .or_default()
+            .push(font_name);
     }
     ctx.set_fonts(definitions);
 }
@@ -146,7 +159,9 @@ impl ForgeApp {
                     settings = stored_settings;
                 }
                 Ok(None) => {}
-                Err(error) => eprintln!("Не удалось загрузить настройки из каталога хранения: {error:#}"),
+                Err(error) => {
+                    eprintln!("Не удалось загрузить настройки из каталога хранения: {error:#}")
+                }
             }
         }
         settings.output_font_size = settings.editor_font_size;
@@ -287,7 +302,9 @@ impl ForgeApp {
             let end = char_to_byte(&self.markdown, max);
             self.markdown.replace_range(start..end, snippet);
             let pos = min + snippet.chars().count();
-            state.cursor.set_char_range(Some(CCursorRange::one(CCursor::new(pos))));
+            state
+                .cursor
+                .set_char_range(Some(CCursorRange::one(CCursor::new(pos))));
             state.store(ctx, id);
             self.mark_changed();
             return;
@@ -519,9 +536,15 @@ impl ForgeApp {
                     ui.menu_button("🕘", |ui| {
                         ui.label("Последние файлы");
                         for p in &self.recent.items {
-                            let name = p.file_name().map(|n| n.to_string_lossy().to_string())
+                            let name = p
+                                .file_name()
+                                .map(|n| n.to_string_lossy().to_string())
                                 .unwrap_or_else(|| p.display().to_string());
-                            if ui.button(name).on_hover_text(p.display().to_string()).clicked() {
+                            if ui
+                                .button(name)
+                                .on_hover_text(p.display().to_string())
+                                .clicked()
+                            {
                                 open_recent = Some(p.clone());
                                 ui.close();
                             }
@@ -576,7 +599,8 @@ impl ForgeApp {
                 {
                     self.status_message = format!("Ошибка сохранения настроек: {error:#}");
                 }
-                if !self.settings.auto_convert && ui.button("⟳ Конвертировать").clicked() {
+                if !self.settings.auto_convert && ui.button("⟳ Конвертировать").clicked()
+                {
                     self.convert();
                 }
 
@@ -599,7 +623,11 @@ impl ForgeApp {
             ui.horizontal_wrapped(|ui| {
                 ui.label(format!("Профиль: {}", self.profile.label()));
                 ui.separator();
-                let draft = if self.doc_modified { "черновик: изменён" } else { "черновик: сохранён" };
+                let draft = if self.doc_modified {
+                    "черновик: изменён"
+                } else {
+                    "черновик: сохранён"
+                };
                 ui.label(draft);
                 ui.separator();
                 ui.label(format!("Автосохранение: {}", self.autosave_status));
@@ -644,8 +672,11 @@ impl ForgeApp {
                             ui.weak(format!("таблиц: {tables}, изображений: {images}"));
                         }
                         if let Some(p) = &self.file_path {
-                            ui.weak(p.file_name().map(|n| n.to_string_lossy().to_string())
-                                .unwrap_or_default());
+                            ui.weak(
+                                p.file_name()
+                                    .map(|n| n.to_string_lossy().to_string())
+                                    .unwrap_or_default(),
+                            );
                         } else {
                             ui.weak("Без имени");
                         }
@@ -730,22 +761,30 @@ impl ForgeApp {
                         Some(pane_scroll(&out))
                     }
                     Tab::Diagnostics => {
-                        egui::ScrollArea::vertical().id_salt("diag_scroll").show(ui, |ui| {
-                            if self.diagnostics.items.is_empty() {
-                                ui.weak("Диагностических сообщений нет.");
-                            }
-                            for d in &self.diagnostics.items {
-                                let (icon, color) = match d.severity {
-                                    Severity::Info => ("ℹ", egui::Color32::from_rgb(120, 160, 220)),
-                                    Severity::Warning => ("⚠", egui::Color32::from_rgb(230, 170, 60)),
-                                    Severity::Error => ("⛔", egui::Color32::from_rgb(230, 100, 100)),
-                                };
-                                ui.horizontal_wrapped(|ui| {
-                                    ui.colored_label(color, icon);
-                                    ui.label(&d.message);
-                                });
-                            }
-                        });
+                        egui::ScrollArea::vertical()
+                            .id_salt("diag_scroll")
+                            .show(ui, |ui| {
+                                if self.diagnostics.items.is_empty() {
+                                    ui.weak("Диагностических сообщений нет.");
+                                }
+                                for d in &self.diagnostics.items {
+                                    let (icon, color) = match d.severity {
+                                        Severity::Info => {
+                                            ("ℹ", egui::Color32::from_rgb(120, 160, 220))
+                                        }
+                                        Severity::Warning => {
+                                            ("⚠", egui::Color32::from_rgb(230, 170, 60))
+                                        }
+                                        Severity::Error => {
+                                            ("⛔", egui::Color32::from_rgb(230, 100, 100))
+                                        }
+                                    };
+                                    ui.horizontal_wrapped(|ui| {
+                                        ui.colored_label(color, icon);
+                                        ui.label(&d.message);
+                                    });
+                                }
+                            });
                         None
                     }
                     Tab::Inserts => {
@@ -760,12 +799,7 @@ impl ForgeApp {
     }
 
     /// Пропорционально связывает прокрутку редактора и активной панели результата.
-    fn sync_scroll(
-        &mut self,
-        ctx: &egui::Context,
-        editor: PaneScroll,
-        output: Option<PaneScroll>,
-    ) {
+    fn sync_scroll(&mut self, ctx: &egui::Context, editor: PaneScroll, output: Option<PaneScroll>) {
         let tab_changed = self.scroll_sync.last_tab != Some(self.active_tab);
         self.scroll_sync.last_tab = Some(self.active_tab);
         let prev_editor = self.scroll_sync.editor.ratio;
@@ -796,8 +830,14 @@ impl ForgeApp {
             output.ratio
         };
 
-        self.scroll_sync.output = PaneScroll { ratio: target, max: output.max };
-        self.scroll_sync.editor = PaneScroll { ratio: target, max: editor.max };
+        self.scroll_sync.output = PaneScroll {
+            ratio: target,
+            max: output.max,
+        };
+        self.scroll_sync.editor = PaneScroll {
+            ratio: target,
+            max: editor.max,
+        };
         if (target - editor.ratio).abs() > EPS || (target - output.ratio).abs() > EPS {
             ctx.request_repaint();
         }
@@ -809,41 +849,45 @@ impl ForgeApp {
 
         let mut open_dialog: Option<DialogKind> = None;
 
-        egui::Grid::new("inserts_grid").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
-            if ui.button("[u] Подчёркивание").clicked() {
-                open_dialog = Some(DialogKind::Underline);
-            }
-            ui.label("Подчёркнутый текст (нет Markdown-аналога)");
-            ui.end_row();
+        egui::Grid::new("inserts_grid")
+            .num_columns(2)
+            .spacing([12.0, 8.0])
+            .show(ui, |ui| {
+                if ui.button("[u] Подчёркивание").clicked() {
+                    open_dialog = Some(DialogKind::Underline);
+                }
+                ui.label("Подчёркнутый текст (нет Markdown-аналога)");
+                ui.end_row();
 
-            if ui.button("[user] Упоминание").clicked() {
-                open_dialog = Some(DialogKind::User);
-            }
-            ui.label("Упоминание сотрудника по ID");
-            ui.end_row();
+                if ui.button("[user] Упоминание").clicked() {
+                    open_dialog = Some(DialogKind::User);
+                }
+                ui.label("Упоминание сотрудника по ID");
+                ui.end_row();
 
-            if ui.button("[size] Размер шрифта").clicked() {
-                open_dialog = Some(DialogKind::Size);
-            }
-            ui.label("Размер 8–30 px");
-            ui.end_row();
+                if ui.button("[size] Размер шрифта").clicked() {
+                    open_dialog = Some(DialogKind::Size);
+                }
+                ui.label("Размер 8–30 px");
+                ui.end_row();
 
-            if ui.button("[color] Цвет текста").clicked() {
-                open_dialog = Some(DialogKind::Color);
-            }
-            ui.label("HEX-цвет из 3 или 6 символов");
-            ui.end_row();
+                if ui.button("[color] Цвет текста").clicked() {
+                    open_dialog = Some(DialogKind::Color);
+                }
+                ui.label("HEX-цвет из 3 или 6 символов");
+                ui.end_row();
 
-            if ui.button("[icon] Иконка").clicked() {
-                open_dialog = Some(DialogKind::Icon);
-            }
-            ui.label("Встроенная иконка с параметрами size и title");
-            ui.end_row();
-
-        });
+                if ui.button("[icon] Иконка").clicked() {
+                    open_dialog = Some(DialogKind::Icon);
+                }
+                ui.label("Встроенная иконка с параметрами size и title");
+                ui.end_row();
+            });
 
         ui.add_space(8.0);
-        ui.weak("Поддерживаются только [b], [i], [u], [s], [url], [user], [icon], [color] и [size].");
+        ui.weak(
+            "Поддерживаются только [b], [i], [u], [s], [url], [user], [icon], [color] и [size].",
+        );
 
         if let Some(kind) = open_dialog {
             self.insert_dialog = Some(InsertDialog::new(kind, &self.settings));
@@ -998,5 +1042,8 @@ fn apply_theme(ctx: &egui::Context, theme: Theme) {
 }
 
 fn char_to_byte(s: &str, char_idx: usize) -> usize {
-    s.char_indices().nth(char_idx).map(|(b, _)| b).unwrap_or(s.len())
+    s.char_indices()
+        .nth(char_idx)
+        .map(|(b, _)| b)
+        .unwrap_or(s.len())
 }

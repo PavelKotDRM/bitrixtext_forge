@@ -66,8 +66,7 @@ impl Storage {
     fn save_json<T: Serialize>(&self, name: &str, value: &T) -> Result<()> {
         self.ensure_dir()?;
         let json = serde_json::to_string_pretty(value)?;
-        fs::write(self.path(name), json)
-            .with_context(|| format!("Не удалось записать {}", name))
+        fs::write(self.path(name), json).with_context(|| format!("Не удалось записать {}", name))
     }
 
     fn load_json<T: for<'de> Deserialize<'de>>(&self, name: &str) -> Result<Option<T>> {
@@ -77,8 +76,9 @@ impl Storage {
         }
         let data = fs::read_to_string(&p)
             .with_context(|| format!("Не удалось прочитать {}", p.display()))?;
-        Ok(Some(serde_json::from_str(&data)
-            .with_context(|| format!("Некорректный JSON в {}", p.display()))?))
+        Ok(Some(serde_json::from_str(&data).with_context(|| {
+            format!("Некорректный JSON в {}", p.display())
+        })?))
     }
 
     // --- settings ---
@@ -113,7 +113,9 @@ impl Storage {
     // --- templates ---
 
     pub fn load_user_templates(&self) -> Result<Vec<Template>> {
-        Ok(self.load_json::<Vec<Template>>("templates.json")?.unwrap_or_default())
+        Ok(self
+            .load_json::<Vec<Template>>("templates.json")?
+            .unwrap_or_default())
     }
 
     pub fn save_user_templates(&self, templates: &[Template]) -> Result<()> {
@@ -123,7 +125,9 @@ impl Storage {
     // --- recent files ---
 
     pub fn load_recent(&self) -> Result<RecentFiles> {
-        Ok(self.load_json::<RecentFiles>("recent.json")?.unwrap_or_default())
+        Ok(self
+            .load_json::<RecentFiles>("recent.json")?
+            .unwrap_or_default())
     }
 
     pub fn save_recent(&self, r: &RecentFiles) -> Result<()> {
@@ -150,7 +154,11 @@ pub struct ExportJson<'a> {
 }
 
 pub fn export_json(path: &Path, markdown: &str, bbcode: &str, profile: &str) -> Result<()> {
-    let data = serde_json::to_string_pretty(&ExportJson { markdown, bbcode, profile })?;
+    let data = serde_json::to_string_pretty(&ExportJson {
+        markdown,
+        bbcode,
+        profile,
+    })?;
     fs::write(path, data).with_context(|| format!("Не удалось экспортировать {}", path.display()))
 }
 
@@ -170,7 +178,10 @@ mod tests {
     #[test]
     fn settings_roundtrip() {
         let (s, dir) = temp_storage();
-        let cfg = AppSettings { autosave_interval_secs: 99, ..Default::default() };
+        let cfg = AppSettings {
+            autosave_interval_secs: 99,
+            ..Default::default()
+        };
         s.save_settings(&cfg).unwrap();
         let loaded = s.load_settings().unwrap();
         assert_eq!(loaded.autosave_interval_secs, 99);
