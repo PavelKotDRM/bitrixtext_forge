@@ -92,7 +92,11 @@ struct ScrollSync {
 
 fn pane_scroll<R>(out: &egui::scroll_area::ScrollAreaOutput<R>) -> PaneScroll {
     let max = (out.content_size.y - out.inner_rect.height()).max(0.0);
-    let ratio = if max > 1.0 { (out.state.offset.y / max).clamp(0.0, 1.0) } else { 0.0 };
+    let ratio = if max > 1.0 {
+        (out.state.clamped_offset().y / max).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
     PaneScroll { ratio, max }
 }
 
@@ -273,7 +277,7 @@ impl ForgeApp {
     }
 
     fn insert_snippet(&mut self, ctx: &egui::Context, snippet: &str) {
-        let id = egui::Id::new(EDITOR_ID);
+        let id = egui::Id::unique(EDITOR_ID);
         if let Some(mut state) = egui::text_edit::TextEditState::load(ctx, id)
             && let Some(range) = state.cursor.char_range()
         {
@@ -610,10 +614,10 @@ impl ForgeApp {
                 if warns > 0 {
                     ui.colored_label(
                         egui::Color32::from_rgb(230, 170, 60),
-                        format!("⚠ предупреждений: {warns}"),
+                        format!("⚠ замечаний: {warns}"),
                     );
                 } else {
-                    ui.weak("без предупреждений");
+                    ui.weak("нет замечаний");
                 }
                 if !self.status_message.is_empty() {
                     ui.separator();
@@ -642,6 +646,11 @@ impl ForgeApp {
                         if let Some(p) = &self.file_path {
                             ui.weak(p.file_name().map(|n| n.to_string_lossy().to_string())
                                 .unwrap_or_default());
+                        } else {
+                            ui.weak("Без имени");
+                        }
+                        if self.doc_modified {
+                            ui.colored_label(egui::Color32::from_rgb(230, 170, 60), "● изменён");
                         }
                     });
                 });
@@ -652,10 +661,11 @@ impl ForgeApp {
                 }
                 let out = area.show(ui, |ui| {
                     let editor = egui::TextEdit::multiline(&mut self.markdown)
-                        .id(egui::Id::new(EDITOR_ID))
+                        .id(egui::Id::unique(EDITOR_ID))
                         .font(egui::FontId::monospace(self.settings.editor_font_size))
                         .desired_width(f32::INFINITY)
                         .desired_rows(30)
+                        .lock_focus(true)
                         .hint_text("Введите Markdown…");
                     if ui.add(editor).changed() {
                         self.mark_changed();
@@ -666,7 +676,7 @@ impl ForgeApp {
 
             let output_ui = &mut columns[1];
             output_ui.vertical(|ui| {
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     ui.selectable_value(&mut self.active_tab, Tab::Bbcode, "BBCode");
                     ui.selectable_value(&mut self.active_tab, Tab::Preview, "Preview");
                     let warns = self.diagnostics.warnings();
@@ -677,6 +687,16 @@ impl ForgeApp {
                     };
                     ui.selectable_value(&mut self.active_tab, Tab::Diagnostics, diag_label);
                     ui.selectable_value(&mut self.active_tab, Tab::Inserts, "Спецвставки");
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.weak(format!("{} симв.", self.output.chars().count()));
+                        if ui
+                            .add_enabled(!self.output.is_empty(), egui::Button::new("📋"))
+                            .on_hover_text("Скопировать весь BBCode")
+                            .clicked()
+                        {
+                            self.copy_result();
+                        }
+                    });
                 });
                 ui.separator();
 
@@ -687,13 +707,15 @@ impl ForgeApp {
                             area = area.vertical_scroll_offset(offset);
                         }
                         let out = area.show(ui, |ui| {
-                            let mut out = self.output.clone();
-                            let view = egui::TextEdit::multiline(&mut out)
-                                .font(egui::FontId::monospace(self.settings.editor_font_size))
-                                .desired_width(f32::INFINITY)
-                                .desired_rows(30)
-                                .interactive(true);
-                            ui.add(view);
+                            ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new(&self.output)
+                                        .monospace()
+                                        .size(self.settings.output_font_size),
+                                )
+                                .selectable(true)
+                                .wrap(),
+                            );
                         });
                         Some(pane_scroll(&out))
                     }
