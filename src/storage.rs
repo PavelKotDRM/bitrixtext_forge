@@ -14,9 +14,7 @@ use crate::templates::Template;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SessionState {
-    pub markdown: String,
     pub profile: Option<ProfileKind>,
-    pub file_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -192,14 +190,27 @@ mod tests {
     fn session_roundtrip() {
         let (s, dir) = temp_storage();
         let sess = SessionState {
-            markdown: "# Привет".into(),
             profile: Some(ProfileKind::CoreSafe),
-            file_path: None,
         };
         s.save_session(&sess).unwrap();
         let loaded = s.load_session().unwrap().unwrap();
-        assert_eq!(loaded.markdown, "# Привет");
         assert_eq!(loaded.profile, Some(ProfileKind::CoreSafe));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn legacy_session_ignores_document_state() {
+        let (s, dir) = temp_storage();
+        s.ensure_dir().unwrap();
+        fs::write(
+            s.path("session.json"),
+            r#"{"markdown":"previous document","profile":"CoreSafe","file_path":"previous.md"}"#,
+        )
+        .unwrap();
+
+        let loaded = s.load_session().unwrap().unwrap();
+        assert_eq!(loaded.profile, Some(ProfileKind::CoreSafe));
+
         let _ = fs::remove_dir_all(dir);
     }
 

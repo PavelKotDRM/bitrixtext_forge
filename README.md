@@ -17,7 +17,7 @@ For a step-by-step user guide in Russian, see [the tutorial](docs/tutorial/READM
 - Markdown table support with cell formatting preserved and a text fallback: Bitrix24 has no documented BBCode table tag.
 - Special inserts: `[u]`, `[user=ID]`, `[color=#HEX]`, `[size=N]`, and `[icon=URL ...]` with parameter validation.
 - Open and save Markdown, export the result to text or JSON, export images and tables to a selected folder, and copy plain or formatted results to the system clipboard.
-- Built-in and custom templates, autosave, session recovery, and a recent files list.
+- Built-in and custom templates, draft autosave, a blank document on startup, and a recent files list.
 - All settings, drafts, and templates are stored locally.
 
 ## Requirements

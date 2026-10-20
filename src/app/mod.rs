@@ -177,12 +177,12 @@ impl ForgeApp {
         let profile = session.profile.unwrap_or(settings.default_profile);
         let mut app = Self {
             profile,
-            markdown: session.markdown,
+            markdown: String::new(),
             output: String::new(),
             diagnostics: Diagnostics::default(),
             pending_tables: Vec::new(),
             pending_images: Vec::new(),
-            file_path: session.file_path,
+            file_path: None,
             doc_modified: false,
             needs_convert: true,
             recent,
@@ -254,9 +254,7 @@ impl ForgeApp {
         }
 
         let session = SessionState {
-            markdown: self.markdown.clone(),
             profile: Some(self.profile),
-            file_path: self.file_path.clone(),
         };
         next_storage.save_autosave(&self.markdown)?;
         next_storage.save_session(&session)?;
@@ -271,9 +269,7 @@ impl ForgeApp {
 
     fn save_recovery_state(&mut self) {
         let session = SessionState {
-            markdown: self.markdown.clone(),
             profile: Some(self.profile),
-            file_path: self.file_path.clone(),
         };
         let autosave_result = self.storage.save_autosave(&self.markdown);
         let session_result = self.storage.save_session(&session);
@@ -506,9 +502,7 @@ impl ForgeApp {
             eprintln!("Не удалось сохранить шаблоны: {error:#}");
         }
         let session = SessionState {
-            markdown: self.markdown.clone(),
             profile: Some(self.profile),
-            file_path: self.file_path.clone(),
         };
         if let Err(error) = self.storage.save_session(&session) {
             eprintln!("Не удалось сохранить сессию: {error:#}");
